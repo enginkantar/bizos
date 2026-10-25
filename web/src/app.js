@@ -59,8 +59,8 @@ const staleSummary = (draft) => staleRules(draft).map(({ domain, from, to }) => 
 function counts() {
   const values = [state.cases.length, state.cases.filter((c) => c.draft).length,
     state.cases.filter((c) => ['approved', 'sent', 'quote_sent'].includes(c.status)).length,
-    // Every draft the gate refused, so a block still counts after a re-run under new rules.
-    state.cases.reduce((n, c) => n + (c.drafts ?? [c.draft]).filter((d) => d?.gate_verdict === 'block').length, 0)];
+    // Cases blocked right now, matching the Blocked tab, so a re-run that clears a block lowers it.
+    state.cases.filter((c) => c.status === 'blocked').length];
   return ['Received', 'Drafted', 'Approved', 'Blocked'].map((label, i) => `<span class="count"><b>${values[i]}</b>${label}</span>`).join('');
 }
 
@@ -275,6 +275,8 @@ document.addEventListener('click', async (event) => {
       state = store.snapshot();
       const after = state.cases.find((c) => c.id === button.dataset.rerun)?.draft;
       notify(`Same request, judged again: ${before?.gate_verdict?.toUpperCase()} → ${after?.gate_verdict?.toUpperCase()} under the current rules. Nothing sent.`);
+      // The re-run button sits at the bottom of the old box; start the new verdict at its header.
+      document.querySelector('.gate')?.scrollTo({ top: 0 });
     } else if (button.dataset.review) {
       const item = state.cases.find((entry) => entry.id === button.dataset.id);
       const decision = button.dataset.review;
@@ -300,6 +302,15 @@ document.addEventListener('change', async (event) => {
   try { await store.selectDomain(event.target.value); state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version; render(); }
   catch (e) { notify(e.message, true); }
 });
+// The diff sits under the tall textarea, below the fold on a stage screen; scroll the form so
+// the whole diff shows, its heading first if it does not fit.
+function showDiff() {
+  const form = document.querySelector('#rules-form');
+  const diff = form?.querySelector('.diff');
+  if (!diff) return;
+  const top = form.scrollTop + diff.getBoundingClientRect().top - form.getBoundingClientRect().top - 12;
+  form.scrollTop = Math.min(top, top + diff.offsetHeight + 24 - form.clientHeight);
+}
 document.addEventListener('submit', async (event) => {
   if (event.target.id !== 'rules-form') return;
   event.preventDefault();
@@ -308,6 +319,7 @@ document.addEventListener('submit', async (event) => {
     await store.saveRules(editorText, editorVersion);
     state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
     notify(from === editorVersion ? 'No change to save.' : `Saved ${state.rules.domain ?? 'company'}.rules.md v${from} → v${editorVersion}. Open the case and re-run the same request.`);
+    showDiff();
   } catch (e) { document.querySelector('#rules-error').textContent = e.message; }
 });
 
