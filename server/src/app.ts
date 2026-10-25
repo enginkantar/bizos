@@ -119,7 +119,6 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
       throw new HttpError(400, "invalid_route");
     }
     const res = createDraft(db, store, { caseId: id, domain, text, ruleCitations: citations, action, route });
-    if (res.outboxId) dispatchOutbox(db, store);
     return {
       status: 201,
       body: {

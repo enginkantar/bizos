@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { audit, type CaseStatus } from "./db.ts";
 import { evaluate, formatCents, type Verdict } from "./gate.ts";
 import type { RuleStore } from "./rulestore.ts";
+import type { RulesFile } from "./rules.ts";
 
 // Drafts and approvals: everything between "an agent wrote a reply" and "the
 // reply is queued to send" (design v1.2 §3, §6). The order is fixed:
@@ -22,7 +23,8 @@ export interface DraftInput {
   // amount the gate validates is the only amount the reply may state.
   action?: { type: string; amountCents: number };
   // The orchestrator's routing verdict. Day 1 of the trust ladder is "every
-  // answer waits for the owner", so that is the default.
+  // answer waits for the owner", so that is the default - and auto_reply is
+  // recorded but never sends while auto-send is off (see createDraft).
   route?: Route;
 }
 
@@ -33,7 +35,8 @@ export interface DraftResult {
   policyId: string | null;
   reasons: string[];
   status: CaseStatus;
-  outboxId: string | null;
+  // Always null: with auto-send off, only an owner's approval queues a send.
+  outboxId: null;
 }
 
 export class DraftError extends Error {
@@ -63,24 +66,29 @@ export function amountsInText(text: string): number[] {
   return out;
 }
 
-// Which rules files are in force for a domain right now, and their versions.
-function versionsFor(store: RuleStore, domain: string): Record<string, number> {
-  const v: Record<string, number> = {};
-  const d = store.active(domain);
-  if (d) v[domain] = d.version;
-  const c = domain === "company" ? undefined : store.active("company");
-  if (c) v.company = c.version;
-  return v;
+// The rules files in force for a domain - its own and the company's - read
+// ONCE, so the citation check and the versions stored on a draft describe the
+// same files.
+function inForce(store: RuleStore, domain: string): { files: RulesFile[]; versions: Record<string, number> } {
+  const files: RulesFile[] = [];
+  const versions: Record<string, number> = {};
+  const own = store.active(domain);
+  if (own) { files.push(own); versions[domain] = own.version; }
+  const company = domain === "company" ? undefined : store.active("company");
+  if (company) { files.push(company); versions.company = company.version; }
+  return { files, versions };
 }
 
-// A cited ID must appear in a rules file actually in force - the policy block
-// or the prose. That checks citations whatever ID scheme the prose settles on,
-// without guessing at one.
-function unknownCitations(store: RuleStore, domain: string, ids: string[]): string[] {
-  const texts = [store.active(domain)?.raw, domain === "company" ? undefined : store.active("company")?.raw]
-    .filter((t): t is string => Boolean(t));
-  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return ids.filter((id) => !texts.some((t) => new RegExp(`(^|[^A-Za-z0-9-])${escape(id)}($|[^A-Za-z0-9-])`).test(t)));
+// How many times the rules in force define an ID: as a policy: key, or as the
+// ID that starts a rule line. A policy key and its prose mirror in the same
+// file are one rule. A citation counts only when this is exactly 1 (decision
+// 2, Oct 25): a word that merely appears in the file - "the", a heading, the
+// domain name - is not a rule, and an ID defined twice is ambiguous.
+function definitions(files: RulesFile[], id: string): number {
+  return files.reduce((n, f) => {
+    const prose = f.ruleIds.filter((r) => r === id).length;
+    return n + (f.thresholds.some((t) => t.id === id) ? Math.max(1, prose) : prose);
+  }, 0);
 }
 
 // The single entry point for a reply: agents call it, and so does the demo's
@@ -94,15 +102,20 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
   const reasons: string[] = [];
   let verdict: Verdict = "pass";
   let policyId: string | null = null;
-  let versions = versionsFor(store, input.domain);
+  const { files, versions } = inForce(store, input.domain);
 
   if (input.action) {
     const g = evaluate(store, { domain: input.domain, type: input.action.type, amountCents: input.action.amountCents });
     verdict = g.verdict;
     policyId = g.policyId;
-    versions = g.rulesVersions;
     if (g.verdict !== "pass") reasons.push(g.reason);
-  } else if (!store.active(input.domain)) {
+    // The gate reads the rules itself. If a file changed in between, the
+    // citations were checked against a version the gate did not use.
+    if (Object.entries(g.rulesVersions).some(([d, v]) => versions[d] !== v)) {
+      verdict = worse(verdict, "review");
+      reasons.push("the rules changed while this draft was checked; a person decides");
+    }
+  } else if (versions[input.domain] === undefined) {
     verdict = "review";
     reasons.push(`no active rules for ${input.domain}; a person decides`);
   }
@@ -121,18 +134,28 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
     verdict = worse(verdict, "review");
     reasons.push("cites no rule: a rules gap for the owner to fill");
   }
-  const unknown = unknownCitations(store, input.domain, input.ruleCitations);
+  const cited = [...new Set(input.ruleCitations)];
+  const unknown = cited.filter((id) => definitions(files, id) === 0);
   if (unknown.length) {
     verdict = worse(verdict, "review");
     reasons.push(`cites rules not in the active version: ${unknown.join(", ")}`);
   }
+  const duplicated = cited.filter((id) => definitions(files, id) > 1);
+  if (duplicated.length) {
+    verdict = worse(verdict, "review");
+    reasons.push(`cites rules defined more than once: ${duplicated.join(", ")}`);
+  }
 
+  // 🔴 AUTO-SEND IS OFF (Engin, decision 2, Oct 25). Every reply waits for the
+  //    owner, whatever the route: a valid citation and a gate pass make a reply
+  //    ready to approve, never sent. Turning auto-send back on is a reviewed
+  //    change here, not a setting.
   const route = input.route ?? "draft_for_approval";
+  if (route === "auto_reply" && verdict === "pass") reasons.push("auto-send is off: every reply waits for the owner");
   const status: CaseStatus =
     verdict === "block" ? "blocked"
     : route === "human_now" ? "escalated"
-    : verdict === "review" || route === "draft_for_approval" ? "held"
-    : "approved";
+    : "held";
 
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -148,11 +171,8 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
         verdict, policyId, reasons.join("; ") || null, t);
     db.prepare("UPDATE cases SET status = ?, domain = ?, updated_at = ? WHERE id = ?").run(status, input.domain, t, kase.id);
     audit(db, "drafted", kase.id, { draft_id: draftId, version: v, verdict, policy_id: policyId, reasons, route });
-    const outboxId = status === "approved"
-      ? enqueue(db, { caseId: kase.id, draftId, version: v, channel: kase.channel, recipient: kase.reply_to, text: input.text })
-      : null;
     db.exec("COMMIT");
-    return { draftId, version: v, verdict, policyId, reasons, status, outboxId };
+    return { draftId, version: v, verdict, policyId, reasons, status, outboxId: null };
   } catch (e) {
     db.exec("ROLLBACK");
     throw e;
@@ -227,7 +247,7 @@ export function decide(db: DatabaseSync, store: RuleStore, draftId: string, d: D
   if (d.decision === "approve") {
     // Rules edited since the draft was checked void the approval: the owner
     // approved a reply under rules that are no longer the rules.
-    const current = versionsFor(store, draft.domain);
+    const current = inForce(store, draft.domain).versions;
     if (d.rulesVersion !== draft.rules_version || JSON.stringify(current) !== draft.rules_versions) {
       throw new DraftError(409, "rules_changed", { current_rules_version: current[draft.domain] ?? null });
     }
