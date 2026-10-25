@@ -36,6 +36,7 @@ def expect(js):
     assert evaluate(js) is True, js
 
 
+browser('open', base)
 for width, height in [(390, 844), (1440, 756)]:
     browser('emulate', '--viewport', f'{width}x{height}x1,mobile,touch' if width == 390 else f'{width}x{height}x1')
     for page in ['', 'widget.html?name=Dana&email=dana@example.com', 'demo.html']:
@@ -77,8 +78,20 @@ expect(f'{desk}.querySelector("#rules-error").innerText === ""')
 expect(f'{desk}.querySelector("#rules-text").value.includes("version: 5")')
 browser('screenshot', str(evidence / 'checked-saved-v5.png'))
 evaluate(f'() => {{ {desk}.querySelector("#close-rules").click(); return true; }}')
+evaluate(f'''() => {{ const d={desk};
+  [...d.querySelectorAll('.row')].find(row => row.innerText.includes('Dana')).click(); return true; }}''')
+evaluate(f'() => {{ {desk}.querySelector("[data-review=approve]").click(); return true; }}')
+expect(f'{desk}.querySelector(".notice.error").innerText.includes("Rules changed")')
+expect(f'{desk}.querySelector("[data-review=reject]").innerText === "Handle in person"')
+evaluate(f'() => {{ {desk}.querySelector("[data-review=reject]").click(); return true; }}')
+expect(f'{desk}.querySelector(".gate.quiet").innerText.includes("owner handles it in person")')
+expect(f'{desk}.querySelector("[data-review]") === null')
+expect(f'{desk}.querySelector(".notice.error") === null')
+browser('screenshot', str(evidence / 'checked-shared-widget-handled.png'))
+evaluate(f'''() => {{ const d={desk};
+  [...d.querySelectorAll('.row')].find(row => row.innerText.includes('Alex Rivera')).click(); return true; }}''')
 evaluate(f'() => {{ {desk}.querySelector("[data-rerun]").click(); return true; }}')
 time.sleep(.1)
 expect(f'{desk}.body.innerText.includes("GATE HOLD") && {desk}.body.innerText.includes("REVIEW")')
 browser('screenshot', str(evidence / 'checked-rerun-review.png'))
-print('PASS: 390px and 1440x756 layouts, shared widget intake, $500 BLOCK, v4 to v5 save, REVIEW rerun')
+print('PASS: 390px and 1440x756 layouts, shared widget intake and handling after rules edit, stale approval blocked, $500 BLOCK, v4 to v5 save, REVIEW rerun')

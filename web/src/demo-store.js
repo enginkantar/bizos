@@ -253,8 +253,10 @@ export function createDemoStore({ readInbox = () => [] } = {}) {
     if (!binding || ['version', 'rules_version', 'reply_to', 'channel', 'action_type'].some((key) => binding[key] !== draft[key])) {
       throw new Error('This draft changed. Review the latest draft before deciding.');
     }
-    if (Object.entries(draft.rules_versions).some(([domain, v]) => state.files[domain].version !== v)) throw new Error('Rules changed. Recheck the draft before approving or rejecting.');
-    if (item.intent === 'refund' && evaluateRefund(item.amount_cents, state.compiled) === 'block') throw new Error('The current refund cap blocks this reply. Recheck the draft.');
+    if (decision === 'approve') {
+      if (Object.entries(draft.rules_versions).some(([domain, v]) => state.files[domain].version !== v)) throw new Error('Rules changed. Recheck the draft before approving.');
+      if (item.intent === 'refund' && evaluateRefund(item.amount_cents, state.compiled) === 'block') throw new Error('The current refund cap blocks this reply. Recheck the draft.');
+    }
     item.status = decision === 'approve' ? 'approved' : 'escalated';
     item.decided = true;
     audit(item, decision === 'approve' ? 'Reply approved locally' : 'Reply rejected', decision === 'approve' ? `${item.customer} / draft v${draft.version}. No message sent. No payment made.` : `${item.customer} / escalated to owner. No message sent.`, decision === 'approve' ? 'pass' : 'review');

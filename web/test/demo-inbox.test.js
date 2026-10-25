@@ -47,6 +47,37 @@ test('duplicate widget message IDs replace the same record and storage errors re
   assert.deepEqual(readDemoMessages(undefined), []);
 });
 
+test('an imported widget submission can be handled in person after the $200 to $600 edit, but not approved', () => {
+  const storage = memoryStorage();
+  const desk = createDemoStore({ readInbox: () => readDemoMessages(storage) });
+  submitDemoMessage(message('review'), storage);
+  desk.refresh();
+  const item = desk.snapshot().cases.find(entry => entry.widget);
+  desk.saveRules(INITIAL_RULES.replace('max_amount_cents: 20000', 'max_amount_cents: 60000').replace('more than $200', 'more than $600'), 4);
+  const before = desk.snapshot();
+  assert.equal(before.rules.version, 5);
+  assert.equal(before.rules.compiled.cap, 60000);
+  assert.throws(() => desk.review(item.id, 'approve', item.draft), /Rules changed/);
+  assert.deepEqual(desk.snapshot(), before);
+  desk.review(item.id, 'reject', item.draft);
+  desk.refresh();
+  const after = desk.snapshot();
+  const handled = after.cases.find(entry => entry.id === item.id);
+  assert.equal(handled.status, 'escalated');
+  assert.equal(handled.decided, true);
+  assert.deepEqual(handled.draft, item.draft);
+  assert.deepEqual(handled.messages, item.messages);
+  assert.match(handled.draft.text, /No AI ran and nothing was sent/);
+  assert.ok(!after.approvals.some(entry => entry.case_id === item.id));
+  assert.equal(after.cases.filter(entry => entry.widget).length, 1);
+  assert.equal(after.audit[0].title, 'Reply rejected');
+  assert.match(after.audit[0].detail, /escalated to owner\. No message sent\./);
+  for (const decision of ['approve', 'reject']) {
+    assert.throws(() => desk.review(item.id, decision, item.draft), /no longer awaiting/);
+  }
+  assert.deepEqual(desk.snapshot(), after);
+});
+
 test('the full refund beat blocks $500, saves company v4 to v5, then holds for billing review', () => {
   const desk = createDemoStore();
   const item = desk.inject('unsafe');
