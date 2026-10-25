@@ -268,10 +268,25 @@ the demo's labeled **"unsafe suggestion"** fixture. The model proposes; this dec
 | field | required | meaning |
 |---|---|---|
 | `domain` | yes | which rules file applies |
-| `text` | yes | the reply |
+| `text` (or `reply`) | yes | the reply. `reply` is the agent output contract's name for it (#29) |
 | `rule_citations` | no | rule IDs the reply relied on. **Only an ID defined exactly once in the rules in force counts** (see below); anything else holds it for the owner |
+| `evidence` | no | `[{ "rule_id", "quote" }]`: which rule backs which claim, **in the rule's own words**. Each `rule_id` also counts as a citation. A quote that doesn't appear in the rule it cites holds the reply (see below) |
+| `missing_info` | no | `["preferred days and times"]`: what the agent still needs from the customer. Stored and shown on the approval card |
 | `action` | no | the money the reply commits to. The gate checks `amount_cents` against the `policy:` limits for `type` |
 | `route` | no | the orchestrator's verdict: `auto_reply`, `draft_for_approval` (default) or `human_now` |
+
+**An agent's output can be posted as-is** (issue #29), with `domain` added:
+
+```json
+{
+  "domain": "front-desk",
+  "reply": "Yes, we see children from age 3. Would you like us to book a first visit?",
+  "evidence": [{ "rule_id": "KNOW-CHILDREN", "quote": "we see children from age 3" }],
+  "missing_info": ["preferred days and times"],
+  "action": null,
+  "route": "draft_for_approval"
+}
+```
 
 `201`:
 
@@ -304,7 +319,17 @@ force (the department's file plus `company.rules.md`), as a `policy:` key or as 
 defined twice, or a word that merely appears in the file (`the`, a heading, an ID mentioned
 inside a sentence) holds the reply; the reason names the ID.
 
-`404 { "error": "case_not_found" }`; `400` for a missing field.
+**Evidence quotes are checked too.** A real rule ID with invented content must not pass, so
+each `quote` must appear in the text of the rule its `rule_id` starts: the rule line plus
+its wrapped lines, in the department's file or `company.rules.md`. Case and spacing are
+ignored; the words are not. Otherwise the reply is held with
+`quotes a rule that does not say this: KNOW-CHILDREN ("we see children from age 1")`.
+An ID that exists only as a `policy:` key has no rule text, so quote its prose rule line
+instead.
+
+`404 { "error": "case_not_found" }`; `400` for a missing field, `invalid_evidence` (not a
+list of non-empty `rule_id` and `quote` strings) or `invalid_missing_info` (not a list of
+non-empty strings).
 
 The **$500 fixture** for the demo:
 
@@ -337,13 +362,17 @@ Drafts waiting for the owner: the newest draft of every `held` case, oldest firs
     "gate_verdict": "review",
     "gate_policy_id": "REFUND-APPROVAL",
     "gate_reason": "$150.00 is over REFUND-APPROVAL ($120.00)",
+    "evidence": [{ "rule_id": "REFUND-APPROVAL", "quote": "refunds over $120 wait for the billing coordinator" }],
+    "missing_info": [],
     "created_at": "…"
   }
 ]
 ```
 
-`rule_citations` is already a list here. `gate_reason` says why it is waiting: show it
-under the draft.
+`rule_citations`, `evidence` and `missing_info` are already lists here. `gate_reason` says
+why it is waiting: show it under the draft. Show one chip per `evidence` item (rule ID and
+quote), and the `missing_info` the reply asks for. In `GET /api/cases/:id`, a draft's
+`evidence` and `missing_info` are JSON strings, like `rule_citations`.
 
 ### `POST /api/approvals/:draft_id`
 
