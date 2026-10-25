@@ -29,6 +29,17 @@ npm start                 # or `npm run dev` to restart on every save
 | `DB_PATH` | `data/bizos.db` | one SQLite file; gitignored, never commit it |
 | `ROUTER_MODEL` / `AGENT_MODEL` | `claude-haiku-5-5` / `claude-sonnet-5-5` | Haiku routes, Sonnet drafts |
 
+**Don't hold a write transaction on `DB_PATH` while the server runs.** Reading the database
+in a viewer or a `sqlite3` shell is fine. But a `BEGIN` / `BEGIN IMMEDIATE` left open, or a
+viewer with unsaved edits, holds the write lock, and the server can't record anything
+until it's released:
+- Each write waits up to 5 seconds for the lock (`busy_timeout`), and **the server doesn't
+  answer requests while it waits**, including `/api/health`. Writes that time out return
+  500.
+- The outbox logs `outbox: pass failed, retrying…` once, keeps trying every second, logs
+  `outbox: recovered` when the lock is gone, and sends what was queued. It no longer
+  crashes the server (issue #23).
+
 Checks before a PR: `npm run build` (type-check), `npm test`, and
 `python tools/claimcheck/claimcheck.py`.
 

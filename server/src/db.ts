@@ -118,14 +118,15 @@ CREATE INDEX IF NOT EXISTS outbox_by_state ON outbox(state);
 CREATE INDEX IF NOT EXISTS audit_by_case ON audit(case_id);
 `;
 
-export function openDb(path: string): DatabaseSync {
+export function openDb(path: string, { busyTimeoutMs = 5000 }: { busyTimeoutMs?: number } = {}): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   // WAL: the UI polls every 2s while agents write; readers do not block the
-  // writer. busy_timeout covers the moments they still collide.
+  // writer. busy_timeout covers the moments they still collide. Tests shorten
+  // it to reach "database is locked" without waiting five seconds.
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(busyTimeoutMs))}`);
   db.exec(SCHEMA);
   migrate(db);
   return db;

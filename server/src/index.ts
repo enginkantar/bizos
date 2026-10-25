@@ -2,7 +2,7 @@ import { loadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { createApp } from "./app.ts";
 import { RuleStore, seedFromTemplate } from "./rulestore.ts";
-import { dispatchOutbox } from "./outbox.ts";
+import { startOutboxLoop } from "./outbox.ts";
 
 const config = loadConfig();
 const db = openDb(config.dbPath);
@@ -29,9 +29,9 @@ for (const { domain, state } of loaded) {
 
 // The outbox is in SQLite, so anything queued before a restart is sent now,
 // then every second. Approvals also dispatch immediately; this loop is what
-// catches retries and work left over from a crash.
-dispatchOutbox(db, store);
-const outboxTimer = setInterval(() => dispatchOutbox(db, store), 1000);
+// catches retries and work left over from a crash. It logs and retries on any
+// error instead of crashing the server (issue #23).
+const outbox = startOutboxLoop(db, store);
 
 server.listen(config.port, config.host, () => {
   console.log(`BizOS listening on http://${config.host}:${config.port}`);
@@ -47,7 +47,7 @@ server.listen(config.port, config.host, () => {
 // rather than left beside it.
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
-    clearInterval(outboxTimer);
+    outbox.stop();
     server.close();
     db.close();
     process.exit(0);
