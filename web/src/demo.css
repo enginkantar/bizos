@@ -1,0 +1,23 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  color: #0F172A;
+  background: #0F172A;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; display: flex; flex-direction: column; background: #0F172A; }
+h2 { margin: 0; }
+.stage-head { flex: none; display: flex; align-items: baseline; gap: 16px; padding: 10px 16px; color: #E2E8F0; font-size: 13px; }
+.stage-head strong { font-size: 15px; color: #fff; }
+.stage-head span { color: #94A3B8; }
+.stage { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 12px; padding: 0 12px 12px; }
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-radius: 10px; overflow: hidden; background: #fff; }
+.pane h2 { flex: none; padding: 6px 12px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #475569; background: #E2E8F0; }
+.pane-widget h2 { color: #fff; background: #0B7A70; }
+.pane iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: #F1F5F9; }
+
+@media (max-width: 900px) {
+  .stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(480px, 1fr) 600px; }
+  .stage-head span { display: none; }
+  body { height: auto; min-height: 100%; }
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Customer and model text is untrusted: no inline script, nothing but this origin. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'" />
+    <meta name="theme-color" content="#0D9488" />
+    <title>BrightSmile Dental | Patient Desk</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%230D9488'/%3E%3Cpath d='M11 13h18v11H19l-6 5v-5h-2z' fill='white'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/widget.css" />
+  </head>
+  <body>
+    <main class="chat" aria-labelledby="chat-title">
+      <header class="chat-head">
+        <span class="chat-mark" aria-hidden="true">B</span>
+        <div>
+          <h1 id="chat-title">BrightSmile Dental - Patient Desk</h1>
+          <p>Replies powered by clinic policy</p>
+        </div>
+      </header>
+      <ol class="chat-log" id="log" aria-live="polite" aria-label="Conversation"></ol>
+      <p class="chat-conn" id="conn" role="status" hidden>Reconnecting. Your messages are safe.</p>
+      <form class="chat-form" id="form" novalidate>
+        <div class="chat-who">
+          <label><span>Name</span><input id="name" name="name" autocomplete="name" placeholder="Optional" /></label>
+          <label><span>Email</span><input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" /></label>
+        </div>
+        <div class="chat-send">
+          <label class="sr-only" for="text">Message</label>
+          <textarea id="text" name="text" rows="2" required placeholder="Ask about hours, appointments or billing"></textarea>
+          <button type="submit" id="send">Send</button>
+        </div>
+        <p class="chat-error" id="error" role="alert" hidden></p>
+      </form>
+    </main>
+    <script type="module" src="./src/widget.js"></script>
+  </body>
+</html>
