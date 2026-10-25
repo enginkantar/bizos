@@ -43,21 +43,26 @@ export function evaluate(store: RuleStore, action: GateAction): GateResult {
     return fail("block", "amount is not a whole, non-negative number of cents");
   }
 
-  const domainState = store.get(action.domain);
-  if (!domainState?.active) {
-    return fail("review", `no active rules for ${action.domain}; a person decides`);
-  }
-  // A broken file on disk (domainState.error) does not change this: the last
-  // good version is still active and is what gets enforced. Holding everything
-  // for review would stall the business over a typo, and the rules editor
-  // already shows the error.
-
   // Shared policies live once in company.rules.md (v1.2 §2) and bind every
   // domain alongside its own.
-  const files = [domainState.active];
-  versions[action.domain] = domainState.active.version;
-  const shared = action.domain === SHARED ? undefined : store.active(SHARED);
-  if (shared) { files.push(shared); versions[SHARED] = shared.version; }
+  //
+  // 🔴 A company file that exists but has NEVER loaded (issue #22) used to be
+  //    skipped: store.active() was undefined, so every company cap silently
+  //    stopped applying everywhere. Nobody can tell which limits it meant to
+  //    set, so every department waits for a person until it is fixed. A file
+  //    that broke AFTER loading keeps its last good version, enforced below.
+  const companyState = action.domain === SHARED ? undefined : store.get(SHARED);
+  if (companyState && !companyState.active) {
+    return fail("review", "company.rules.md failed to load and has no good version; a person decides");
+  }
+
+  // A broken file on disk (state.error) does not change what is enforced: the
+  // last good version stays active. Holding everything for review would stall
+  // the business over a typo, and the rules editor already shows the error.
+  const domainState = store.get(action.domain);
+  const files = [];
+  if (domainState?.active) { files.push(domainState.active); versions[action.domain] = domainState.active.version; }
+  if (companyState?.active) { files.push(companyState.active); versions[SHARED] = companyState.active.version; }
 
   const thresholds = files.flatMap((f) => f.thresholds);
   const applies = (t: Threshold) => t.appliesTo === "*" || t.appliesTo.includes(action.type);
@@ -74,6 +79,19 @@ export function evaluate(store: RuleStore, action: GateAction): GateResult {
     reason: `${formatCents(action.amountCents)} is over ${worst.id} (${formatCents(worst.limitCents)})`,
     rulesVersions: versions,
   };
+
+  // 🔴 THE DOMAIN IS MODEL OUTPUT TOO (issue #22). A department with no rules
+  //    file used to return review before the company file was even read, so
+  //    a $600 write-off on "no-such-dept" dodged WRITE-OFF-CAP. Company limits
+  //    are now applied first: a company block still blocks, and anything else
+  //    goes to a person, because the department's own limits are unknown.
+  if (!domainState?.active) {
+    const noRules = `no active rules for ${action.domain}; a person decides`;
+    if (overLimit?.verdict === "block") return overLimit;
+    return overLimit
+      ? { ...overLimit, verdict: "review", reason: `${overLimit.reason}; ${noRules}` }
+      : { verdict: "review", policyId: null, limitCents: null, reason: noRules, rulesVersions: versions };
+  }
 
   // 🔴 THE ACTION TYPE IS MODEL OUTPUT (issue #7). Once the rules sort money by
   //    type - any threshold scoped with applies_to - a type they never name is

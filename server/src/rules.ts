@@ -150,13 +150,26 @@ export function parseRulesFile(raw: string, expectedDomain?: string): RulesFile 
   const version = m.version;
   if (!Number.isSafeInteger(version) || (version as number) < 1) errors.push("version: required, a whole number from 1");
 
+  // 🔴 ONE INDENTATION SLIP USED TO REMOVE EVERY LIMIT (issue #22). With the
+  //    entries not indented under `policy:`, YAML reads `policy:` as null and
+  //    each entry as a top-level key, and both were accepted: the file loaded
+  //    with zero limits, the save returned 200, and the live v3 -> v4 edit
+  //    on stage could switch the gate off without a single warning. So an
+  //    empty `policy:` and a rule ID outside the block are both refused.
+  for (const key of Object.keys(m)) {
+    if (ID_PATTERN.test(key)) {
+      errors.push(`${key}: a policy entry outside the policy: block - indent it under policy:`);
+    }
+  }
   const thresholds: Threshold[] = [];
   if (!("policy" in m)) {
     errors.push("policy: required, even if empty (policy: {}) - it is where every limit lives");
-  } else if (m.policy !== null && (typeof m.policy !== "object" || Array.isArray(m.policy))) {
+  } else if (m.policy === null) {
+    errors.push("policy: is empty - indent the limits under it, or write policy: {} for a department with no limits");
+  } else if (typeof m.policy !== "object" || Array.isArray(m.policy)) {
     errors.push("policy: expected rule IDs mapped to limits");
   } else {
-    for (const [id, value] of Object.entries((m.policy ?? {}) as Record<string, unknown>)) {
+    for (const [id, value] of Object.entries(m.policy as Record<string, unknown>)) {
       const t = compileEntry(id, value, errors);
       if (t) thresholds.push(t);
     }
