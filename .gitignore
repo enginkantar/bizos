@@ -9,3 +9,14 @@ dist/
 *.db-shm
 .DS_Store
 npm-debug.log*
+
+# added with the repo kit
+*.sqlite
+*.sqlite3
+*.log
+*.tsbuildinfo
+coverage/
+.vscode/
+.idea/
+Thumbs.db
+.claude/settings.local.json

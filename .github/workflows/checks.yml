@@ -1,0 +1,47 @@
+# Two required checks on every push and pull request.
+#
+#   claims   - claimcheck: does the project still have the properties it
+#              claims (no keys, no database, one policy source, a quickstart)?
+#   install  - does a fresh checkout install and build? This is the CI half of
+#              the "git clone && npm install && npm start" promise, and it
+#              passes trivially until package.json exists.
+#
+# Both job names are the status-check contexts that branch protection on main
+# requires. Renaming a job silently un-requires it, so rename here AND in
+# setup-repo.sh together.
+
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Claims hold
+        run: python3 tools/claimcheck/claimcheck.py
+
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install, build and test from a clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package.json ]; then
+            echo "no package.json yet - nothing to install"
+            exit 0
+          fi
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run build --if-present
+          npm test --if-present
