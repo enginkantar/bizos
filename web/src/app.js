@@ -22,6 +22,15 @@ const domainLabel = (domain) => ({ 'front-desk': 'Front desk', billing: 'Billing
 const channelLabel = (channel) => ({ webform: 'Web chat', email: 'Email' })[channel] ?? channel;
 const initials = (name) => escape(String(name ?? 'Guest').split(' ').map(word => word[0] ?? '').join(''));
 const selected = () => state.cases.find((item) => item.id === selectedId);
+// Live mode takes the queue from GET /api/approvals: held and escalated cases, urgent first.
+function approvalCases() {
+  if (store.mode === 'demo') return state.cases.filter((item) => item.status === 'held').toReversed();
+  return (state.approvals ?? []).map((entry) => {
+    const item = state.cases.find((c) => c.id === entry.case_id);
+    return item && { ...item, urgent: entry.urgent };
+  }).filter(Boolean);
+}
+const awaitingApproval = (item) => approvalCases().some((entry) => entry.id === item.id);
 const selectedDraft = (id) => state.cases.find((item) => item.id === id)?.draft ?? {};
 const statuses = {
   blocked: ['block', 'Blocked'], held: ['review', 'Needs approval'], simulated: ['pass', 'Reply simulated'],
@@ -62,10 +71,10 @@ const staleDraft = (draft) => staleRules(draft).length > 0;
 const staleSummary = (draft) => staleRules(draft).map(({ domain, from, to }) => `${domain}.rules.md v${from} → ${to == null ? 'removed' : `v${to}`}`).join(', ');
 function decisionBadges(item) {
   const d = item.draft;
-  return `<div class="decision-badges">${d ? chip(d.gate_verdict, `Gate: ${{pass:'PASS',review:'REVIEW',block:'BLOCK'}[d.gate_verdict]}`) : ''}${chip(statuses[item.status]?.[0] ?? 'neutral', `Status: ${item.status}`)}${d?.amount_cents == null ? '' : `<strong class="action-amount">${money(d.amount_cents)} ${escape(d.action_type ?? '')}</strong>`}</div>`;
+  return `<div class="decision-badges">${item.urgent ? chip('block', 'URGENT') : ''}${d ? chip(d.gate_verdict, `Gate: ${{pass:'PASS',review:'REVIEW',block:'BLOCK'}[d.gate_verdict]}`) : ''}${chip(statuses[item.status]?.[0] ?? 'neutral', `Status: ${item.status}`)}${d?.amount_cents == null ? '' : `<strong class="action-amount">${money(d.amount_cents)} ${escape(d.action_type ?? '')}</strong>`}</div>`;
 }
 function caseRows() {
-  const cases = state.cases.filter((item) => (filter === 'all' || (filter === 'gap' ? item.draft && !item.draft.rule_citations.length : item.status === filter)) && `${escape(item.customer ?? 'Guest')} ${escape(item.title)} ${escape(domainLabel(item.domain) ?? 'Unrouted')}`.toLowerCase().includes(query.toLowerCase()));
+  const cases = state.cases.filter((item) => (filter === 'all' || (filter === 'gap' ? item.draft && !item.draft.rule_citations.length : filter === 'held' ? awaitingApproval(item) : item.status === filter)) && `${escape(item.customer ?? 'Guest')} ${escape(item.title)} ${escape(domainLabel(item.domain) ?? 'Unrouted')}`.toLowerCase().includes(query.toLowerCase()));
   return cases.length ? cases.map((item) => `<button class="case-row ${item.id === selectedId ? 'selected' : ''}" data-case="${item.id}" aria-pressed="${item.id === selectedId}">
     <span class="case-person"><span class="avatar ${escape((item.domain ?? 'unrouted').toLowerCase())}">${initials(item.customer)}</span><span><strong>${escape(item.customer ?? 'Guest')}</strong><small>${escape(channelLabel(item.channel))} <span aria-hidden="true">·</span> ${escape(domainLabel(item.domain) ?? 'Unrouted')}</small></span><span class="case-dot ${statuses[item.status][0]}" aria-label="${statuses[item.status][1]}"></span></span>
     <span class="case-subject">${escape(item.title)}</span><span class="case-bottom">${chip(...statuses[item.status])}<small>v${item.draft?.rules_version ?? '-'}</small></span>
@@ -95,25 +104,26 @@ function detail() {
   if (!draft) return `<main class="panel case-detail"><header class="detail-heading"><h2>${escape(item.customer)}</h2></header><div class="detail-scroll">${decisionBadges(item)}<p>${escape(item.message)}</p><p>Waiting for a draft.</p></div></main>`;
   const stale = staleDraft(draft);
   const gate_verdict = { pass: ['pass', 'PASS'], review: ['review', 'REVIEW'], block: ['block', 'BLOCK'] }[draft.gate_verdict];
-  const completed = ['approved', 'sent', 'escalated'].includes(item.status);
+  const queued = awaitingApproval(item);
+  const completed = ['approved', 'sent'].includes(item.status) || (item.status === 'escalated' && !queued);
   return `<main class="panel case-detail" id="case-detail" aria-labelledby="case-title"><header class="detail-heading"><div><div class="detail-context">${escape(domainLabel(item.domain) ?? 'Unrouted')} / ${escape(channelLabel(item.channel))} / <span>${store.mode === 'demo' ? 'Synthetic patient' : 'Live case'}</span></div><h2 id="case-title">${escape(item.title)}</h2><p>${escape(item.customer)} <span class="muted">&lt;${escape(item.reply_to)}&gt;</span></p></div>${chip('neutral', `Rules v${draft.rules_version}`)}</header>
     <div class="detail-scroll">${decisionBadges(item)}${verdictBanner(item)}
       <section class="conversation" aria-label="Customer conversation"><div class="message-label"><span class="avatar ${escape((item.domain ?? 'unrouted').toLowerCase())}">${initials(item.customer)}</span><strong>${escape(item.customer ?? 'Guest')}</strong><time>${time(item.at)}</time></div><div class="message-bubble">${escape(item.message)}</div><small class="fixture-note">${item.unsafe ? 'Unsafe suggestion fixture / deliberately proposes an over-cap refund' : store.mode === 'demo' ? 'Simulated inbound message' : 'Received by the BizOS server'}</small></section>
-      <section class="draft" aria-labelledby="draft-heading"><div class="draft-heading"><h3 id="draft-heading">${icon('spark')}${draft.gate_verdict === 'block' ? 'Blocked suggestion' : `${escape(domainLabel(draft.domain ?? item.domain) ?? 'Unrouted')} draft`}</h3>${chip(...gate_verdict)}</div><p class="held-reason">${escape(draft.gate_reason ?? '')}</p><p class="draft-text">${escape(draft.text)}</p><div class="citations">${citations(draft)}</div><div class="draft-binding"><span>Draft v${draft.version} / rules v${draft.rules_version}</span><span>To: ${escape(draft.reply_to)} / ${escape(channelLabel(draft.channel))}</span></div></section>
+      <section class="draft" aria-labelledby="draft-heading"><div class="draft-heading"><h3 id="draft-heading">${icon('spark')}${draft.gate_verdict === 'block' ? 'Blocked suggestion' : `${escape(domainLabel(draft.domain ?? item.domain) ?? 'Unrouted')} draft`}</h3>${chip(...gate_verdict)}</div>${draft.gate_reason ? `<p class="held-reason">${escape(draft.gate_reason)}</p>` : ''}<p class="draft-text">${escape(draft.text)}</p><div class="citations">${citations(draft)}</div><div class="draft-binding"><span>Draft v${draft.version} / rules v${draft.rules_version}</span><span>To: ${escape(draft.reply_to)} / ${escape(channelLabel(draft.channel))}</span></div></section>
       ${stale && !completed ? `<div class="stale"><strong>Rules changed: ${escape(staleSummary(draft))}</strong><p>This draft still shows its original policy check. Recheck it before a decision.</p><button class="button secondary" data-recheck="${item.id}">Recheck draft</button></div>` : ''}
       ${draft.gate_verdict === 'block' ? '<div class="owner-next"><strong>The owner takes it from here.</strong><p>Suggested response: “Thanks for letting us know. I have passed your request to the owner for a personal review.”</p></div>' : ''}
-      ${item.status === 'held' && !stale ? `<div class="detail-actions"><span>Ready for your review in the approval queue.</span><button class="button secondary" data-focus-approval="${item.id}">Review reply ${icon('arrow')}</button></div>` : ''}
+      ${queued && !stale ? `<div class="detail-actions"><span>Ready for your review in the approval queue.</span><button class="button secondary" data-focus-approval="${item.id}">Review reply ${icon('arrow')}</button></div>` : ''}
       ${completed ? `<div class="completion ${item.status === 'rejected' ? 'review' : 'pass'}">${icon('check')}<span><strong>${statuses[item.status][1]}</strong><br>${store.mode === 'demo' ? 'Local demo decision. No message sent.' : item.status === 'sent' ? 'Reply sent by the server.' : 'Server status shown above. Approval never makes a payment.'}</span></div>` : ''}
     </div><footer class="detail-footer"><span class="small-dot"></span>${store.mode === 'demo' ? 'Fixture simulation' : 'Live Policy Gate'} <span>Auto-send off</span></footer></main>`;
 }
 function approvalQueue() {
-  const items = state.cases.filter((item) => item.status === 'held').toReversed();
+  const items = approvalCases();
   approvalIndex = Math.min(approvalIndex, Math.max(0, items.length - 1));
   const visible = items.slice(approvalIndex, approvalIndex + 1);
   return `<section class="panel approvals" aria-labelledby="approvals-heading"><div class="panel-heading"><h2 id="approvals-heading">Your approval <span class="count amber">${items.length}</span></h2><span class="muted">Replies only</span></div><div class="approval-items">${items.length ? visible.map((item) => {
     const d = item.draft;
     const stale = staleDraft(d);
-    return `<article class="approval-card" id="approval-${item.id}">${decisionBadges(item)}<div class="approval-title"><button data-case="${item.id}" title="Read the full draft for ${escape(item.customer)}">${escape(item.customer)}</button>${d.amount_cents ? chip('neutral', money(d.amount_cents)) : chip('neutral', domainLabel(item.domain))}</div><p>${escape(d.text)}</p><p class="held-reason">${escape(d.gate_reason ?? '')}</p><div class="citations">${citations(d)}</div><div class="approval-binding">Draft v${d.version} / rules v${d.rules_version}<br>To: ${escape(d.reply_to)} / ${escape(channelLabel(d.channel))}</div>${stale ? `<button class="button secondary full stale-recheck" data-recheck="${item.id}" title="${escape(staleSummary(d))}">Rules changed. Recheck draft</button>` : `<div class="approval-actions"><button class="button primary" data-review="approve" data-id="${item.id}">${icon('check')}Approve reply</button><button class="button secondary" data-review="reject" data-id="${item.id}">Reject</button></div>`}</article>`;
+    return `<article class="approval-card" id="approval-${item.id}">${decisionBadges(item)}<div class="approval-title"><button data-case="${item.id}" title="Read the full draft for ${escape(item.customer)}">${escape(item.customer)}</button>${d.amount_cents ? chip('neutral', money(d.amount_cents)) : chip('neutral', domainLabel(item.domain))}</div><p>${escape(d.text)}</p>${d.gate_reason ? `<p class="held-reason">${escape(d.gate_reason)}</p>` : ''}<div class="citations">${citations(d)}</div><div class="approval-binding">Draft v${d.version} / rules v${d.rules_version}<br>To: ${escape(d.reply_to)} / ${escape(channelLabel(d.channel))}</div>${stale ? `<button class="button secondary full stale-recheck" data-recheck="${item.id}" title="${escape(staleSummary(d))}">Rules changed. Recheck draft</button>` : `<div class="approval-actions"><button class="button primary" data-review="approve" data-id="${item.id}">${icon('check')}Approve reply</button><button class="button secondary" data-review="reject" data-id="${item.id}">Reject</button></div>`}</article>`;
   }).join('') : '<div class="empty"><span class="empty-check">✓</span><strong>You’re all caught up.</strong><p>Replies that need your review will appear here.</p></div>'}</div>${items.length ? `<div class="queue-pager"><button class="pager-button" data-approval-page="-1" ${approvalIndex === 0 ? 'disabled' : ''} aria-label="Previous approval">‹</button><span>${approvalIndex + 1} of ${items.length} replies</span><button class="pager-button" data-approval-page="1" ${approvalIndex === items.length - 1 ? 'disabled' : ''} aria-label="Next approval">›</button></div>` : ''}<p class="approval-note">${store.mode === 'demo' ? 'Local approval only. Nothing is sent.' : 'Approves a reply, never a payment.'}</p></section>`;
 }
 function auditFeed() {
@@ -208,7 +218,7 @@ document.addEventListener('click', async (event) => {
       auditIndex = 0;
       notify(store.mode === 'demo' ? 'Demo decision recorded. Nothing sent.' : 'Server decision recorded.');
     } else if (button.dataset.focusApproval) {
-      approvalIndex = state.cases.filter((item) => item.status === 'held').toReversed().findIndex((item) => item.id === button.dataset.focusApproval);
+      approvalIndex = approvalCases().findIndex((item) => item.id === button.dataset.focusApproval);
       render();
       document.querySelector(`#approval-${button.dataset.focusApproval}`).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       document.querySelector(`#approval-${button.dataset.focusApproval} [data-review]`)?.focus({ preventScroll: true });
