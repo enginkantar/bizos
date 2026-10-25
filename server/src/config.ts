@@ -6,6 +6,7 @@ export interface Config {
   host: string;
   port: number;
   dbPath: string;
+  rulesDir: string;
   anthropicApiKey: string | undefined;
   routerModel: string;
   agentModel: string;
@@ -22,6 +23,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // that get tracked: this file holds every customer message typed into
     // the demo.
     dbPath: env.DB_PATH || "data/bizos.db",
+    // The business's own rules: one <domain>.rules.md per department, copied
+    // from a starter pack in templates/ (templates/README.md).
+    rulesDir: env.RULES_DIR || "business",
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
     routerModel: env.ROUTER_MODEL || "claude-haiku-5-5",
     agentModel: env.AGENT_MODEL || "claude-sonnet-5-5",
