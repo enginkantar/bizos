@@ -1,11 +1,15 @@
 import { loadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { createApp } from "./app.ts";
-import { RuleStore } from "./rulestore.ts";
+import { RuleStore, seedFromTemplate } from "./rulestore.ts";
 import { dispatchOutbox } from "./outbox.ts";
 
 const config = loadConfig();
 const db = openDb(config.dbPath);
+const seeded = seedFromTemplate(config.rulesDir, config.starterTemplate);
+if (seeded.length) {
+  console.log(`first start: copied the ${config.starterTemplate} starter pack into ${config.rulesDir}/ (${seeded.join(", ")})`);
+}
 const store = new RuleStore(config.rulesDir);
 const server = createApp(db, config, store);
 

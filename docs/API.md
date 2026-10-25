@@ -24,7 +24,8 @@ npm start                 # or `npm run dev` to restart on every save
 | `ANTHROPIC_API_KEY` | — | needed once the agents call Claude; `/api/health` says whether it is set |
 | `HOST` | `127.0.0.1` | keep it on localhost: rule edits have no sign-in |
 | `PORT` | `3000` | |
-| `RULES_DIR` | `business` | where `<domain>.rules.md` files are read from |
+| `RULES_DIR` | `business` | where `<domain>.rules.md` files are read from (gitignored: the business's own data) |
+| `STARTER_TEMPLATE` | `dental-office` | on first start, if `RULES_DIR` doesn't exist, copies `templates/<name>/` into it. Empty = never |
 | `DB_PATH` | `data/bizos.db` | one SQLite file; gitignored, never commit it |
 | `ROUTER_MODEL` / `AGENT_MODEL` | `claude-haiku-5-5` / `claude-sonnet-5-5` | Haiku routes, Sonnet drafts |
 
