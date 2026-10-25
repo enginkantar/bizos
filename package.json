@@ -1,0 +1,21 @@
+{
+  "name": "bizos",
+  "version": "0.1.0",
+  "description": "AI front desk for small businesses: rules in plain files, limits enforced in code.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/src/index.ts",
+    "dev": "node --env-file-if-exists=.env --watch server/src/index.ts",
+    "build": "tsc --noEmit",
+    "test": "node --test \"server/test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
