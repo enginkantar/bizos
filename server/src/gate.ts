@@ -59,25 +59,39 @@ export function evaluate(store: RuleStore, action: GateAction): GateResult {
   const shared = action.domain === SHARED ? undefined : store.active(SHARED);
   if (shared) { files.push(shared); versions[SHARED] = shared.version; }
 
+  const thresholds = files.flatMap((f) => f.thresholds);
   const applies = (t: Threshold) => t.appliesTo === "*" || t.appliesTo.includes(action.type);
-  const tripped = files
-    .flatMap((f) => f.thresholds)
+  const tripped = thresholds
     .filter((t) => applies(t) && action.amountCents > t.limitCents)
     // Strictest first: block beats review, then the lower limit, so the banner
     // names the rule that bit hardest.
     .sort((a, b) => rank[b.outcome] - rank[a.outcome] || a.limitCents - b.limitCents);
-
   const worst = tripped[0];
-  if (!worst) {
-    return { verdict: "pass", policyId: null, limitCents: null, reason: "within every limit", rulesVersions: versions };
-  }
-  return {
-    verdict: worst.outcome,
+  const overLimit = worst && {
+    verdict: worst.outcome as Verdict,
     policyId: worst.id,
     limitCents: worst.limitCents,
     reason: `${formatCents(action.amountCents)} is over ${worst.id} (${formatCents(worst.limitCents)})`,
     rulesVersions: versions,
   };
+
+  // 🔴 THE ACTION TYPE IS MODEL OUTPUT (issue #7). Once the rules sort money by
+  //    type - any threshold scoped with applies_to - a type they never name is
+  //    the shape of a relabel: a $500 refund proposed as "store_credit" skips
+  //    every refund limit and passes. So an unnamed type fails closed to review.
+  //    A block from an unscoped cap still wins: a backstop binds whatever the
+  //    label. Rules that never scope a threshold apply every limit to every
+  //    type, so there is nothing to escape and nothing changes there.
+  const vocabulary = [...new Set(thresholds.flatMap((t) => (t.appliesTo === "*" ? [] : t.appliesTo)))];
+  if (vocabulary.length > 0 && !vocabulary.includes(action.type) && overLimit?.verdict !== "block") {
+    const unnamed = `"${action.type}" is not an action type any rule names (${vocabulary.join(", ")}); a person decides`;
+    return overLimit
+      ? { ...overLimit, verdict: "review", reason: `${overLimit.reason}; ${unnamed}` }
+      : { verdict: "review", policyId: null, limitCents: null, reason: unnamed, rulesVersions: versions };
+  }
+
+  return overLimit
+    ?? { verdict: "pass", policyId: null, limitCents: null, reason: "within every limit", rulesVersions: versions };
 }
 
 export const formatCents = (c: number) => `$${(c / 100).toFixed(2)}`;
