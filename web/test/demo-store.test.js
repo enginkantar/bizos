@@ -98,10 +98,42 @@ test('rule changes invalidate approval and recheck can block an existing draft',
 test('approvals are bound to draft, rule version, reply_to, channel, and action', () => {
   const store = createDemoStore();
   const item = heldCase(store);
-  for (const key of ['version', 'rules_version', 'reply_to', 'channel', 'action_type']) {
-    assert.throws(() => store.review(item.id, 'approve', { ...item.draft, [key]: 'changed' }), /draft changed/i);
+  for (const decision of ['approve', 'reject']) {
+    assert.throws(() => store.review(item.id, decision), /draft changed/i);
+    for (const key of ['version', 'rules_version', 'reply_to', 'channel', 'action_type']) {
+      assert.throws(() => store.review(item.id, decision, { ...item.draft, [key]: 'changed' }), /draft changed/i);
+    }
   }
   assert.equal(store.snapshot().cases.find((entry) => entry.id === item.id).status, 'held');
+});
+
+test('company and department edits block stale approvals but allow rejecting held and escalated drafts', () => {
+  const edits = {
+    company: capText(14000),
+    billing: FIXTURE_RULES.billing.replace('over_cents: 12000', 'over_cents: 10000'),
+    'front-desk': FIXTURE_RULES['front-desk'].replace('max_amount_cents: 7500', 'max_amount_cents: 7000'),
+  };
+  for (const kind of ['hours', 'sales', 'gap', 'refund']) {
+    for (const domain of ['company', kind === 'refund' ? 'billing' : 'front-desk']) {
+      const store = createDemoStore();
+      const item = kind === 'refund' ? heldCase(store) : store.inject(kind);
+      store.selectDomain(domain);
+      store.saveRules(edits[domain], store.snapshot().rules.version);
+      const before = store.snapshot();
+      assert.throws(() => store.review(item.id, 'approve', item.draft), /Rules changed/);
+      assert.deepEqual(store.snapshot(), before);
+      store.review(item.id, 'reject', item.draft);
+      const after = store.snapshot();
+      const rejected = after.cases.find(entry => entry.id === item.id);
+      assert.equal(rejected.status, 'escalated');
+      assert.equal(rejected.decided, true);
+      assert.deepEqual(rejected.draft, item.draft);
+      assert.deepEqual(rejected.messages, item.messages);
+      assert.ok(!after.approvals.some(entry => entry.case_id === item.id));
+      assert.equal(after.audit[0].title, 'Reply rejected');
+      assert.match(after.audit[0].detail, /No message sent\./);
+    }
+  }
 });
 
 test('approval records only local approval and a duplicate cannot create another event', () => {

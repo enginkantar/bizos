@@ -67,7 +67,7 @@ export const money = (cents) => new Intl.NumberFormat('en-US', {
 
 // Deliberately narrow fixture editor, never used for live policy decisions: only the
 // amounts, and company's opening hours, may change.
-const shape = (value) => value.replace(/^version: \d+$/m, 'version: N').replace(/(max_amount_cents: |over_cents: )\d+/g, '$1N').replace(/^- KNOW-HOURS: .+$/m, '- KNOW-HOURS: TEXT');
+const shape = (value) => value.replace(/^version: \d+$/m, 'version: N').replace(/(max_amount_cents: |over_cents: )\d+/g, '$1N').replace(/\$\d+(?:,\d{3})*(?:\.\d{2})?/g, '$N').replace(/^- KNOW-HOURS: .+$/m, '- KNOW-HOURS: TEXT');
 function compileFile(domain, text) {
   if (!FIXTURE_RULES[domain] || shape(text) !== shape(FIXTURE_RULES[domain])) throw new Error('Demo editor: edit only the displayed amounts or hours. Nothing saved.');
   const policy = [...text.matchAll(/^  ([A-Z][A-Z0-9-]*): +\{ (max_amount_cents|over_cents): (\d+),/gm)]
@@ -102,10 +102,11 @@ const fixtures = {
 };
 
 // This is the replaceable data boundary. It never calls an API, sends a message,
-// moves money, or persists data. Each browser session starts from the same fixtures.
-export function createDemoStore() {
+// moves money, or persists decisions. The optional inbox imports browser-local widget input.
+export function createDemoStore({ readInbox = () => [] } = {}) {
   let state;
   let sequence;
+  const imported = new Set();
   function stamp() {
     sequence += 1;
     return new Date(Date.UTC(2026, 9, 25, 9, 41, 0) + sequence * 17000).toISOString();
@@ -137,7 +138,7 @@ export function createDemoStore() {
       evidence: [{ rule_id: 'NEW-1', quote: 'arrive 15 minutes early' }, { rule_id: 'KNOW-NEW-PATIENT', quote: 'New patient visits take about 90 minutes' }],
       missing_info: ['which Delta Dental plan they have (PPO or HMO)'],
       text: `Welcome to Harbor Smile Dental, and yes, we are accepting new patients. Your first visit takes about 90 minutes: exam, cleaning and X-rays. ${rules.sales} Which Delta Dental plan do you have, so we can check it before your visit?` };
-    return { ...common, gate_verdict: 'pass', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: [], text: 'Thanks for asking. I will check with the owner about insurance coverage and get back to you.' };
+    return { ...common, gate_verdict: 'pass', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: [], text: item.widget ? 'Demo widget submission awaiting owner review. No AI ran and nothing was sent.' : 'Thanks for asking. I will check with the owner about insurance coverage and get back to you.' };
   }
   function statusFor(item) {
     if (item.intent === 'gap') return 'escalated';
@@ -152,6 +153,10 @@ export function createDemoStore() {
     item.draft = draftFor(item);
     item.status = statusFor(item);
     state.cases.unshift(item);
+    if (item.widget) {
+      audit(item, 'Demo widget submission received', 'Browser-local input. No AI ran. Awaiting owner review; nothing sent.', 'review');
+      return structuredClone(item);
+    }
     audit(item,
       item.status === 'blocked' ? `${money(item.amount_cents)} action blocked` : item.status === 'simulated' ? 'Auto-reply simulated' : item.status === 'escalated' ? 'Rules gap found' : 'Draft held for approval',
       item.status === 'blocked' ? `REFUND-CAP: ${money(item.draft.cap)}. Escalated to owner. No message sent.` : item.status === 'simulated' ? 'HOURS cited. Simulated reply only.' : item.status === 'escalated' ? 'No insurance coverage rule. Owner response needed.' : `${item.customer} / rules v${item.draft.rules_version}. No message sent.`,
@@ -164,6 +169,8 @@ export function createDemoStore() {
     return item;
   }
   function reset(empty = false) {
+    // Reset clears this desk's run without replaying old widget submissions on the next poll.
+    if (state) for (const message of readInbox()) imported.add(message.message_id);
     sequence = 0;
     state = { cases: [], audit: [], selected: 'company', diff: { domain: null, lines: [] }, compiled: compileRules(),
       files: Object.fromEntries(DOMAINS.map((domain) => [domain, { version: Number(FIXTURE_RULES[domain].match(/^version: (\d+)$/m)[1]), text: FIXTURE_RULES[domain] }])) };
@@ -175,6 +182,14 @@ export function createDemoStore() {
       inject('unsafe');
     }
     return snapshot();
+  }
+  function refresh() {
+    for (const envelope of readInbox()) {
+      if (imported.has(envelope.message_id)) continue;
+      inject('gap', { widget: true, customer: envelope.customer?.name || 'Demo visitor',
+        reply_to: envelope.reply_to, channel: 'webform', title: 'Demo widget submission', message: envelope.content.text });
+      imported.add(envelope.message_id);
+    }
   }
   // The same shape as the live store's snapshot, so the desk renders one way in both modes.
   function snapshot() {
@@ -238,13 +253,16 @@ export function createDemoStore() {
     if (!binding || ['version', 'rules_version', 'reply_to', 'channel', 'action_type'].some((key) => binding[key] !== draft[key])) {
       throw new Error('This draft changed. Review the latest draft before deciding.');
     }
-    if (Object.entries(draft.rules_versions).some(([domain, v]) => state.files[domain].version !== v)) throw new Error('Rules changed. Recheck the draft before approving or rejecting.');
-    if (item.intent === 'refund' && evaluateRefund(item.amount_cents, state.compiled) === 'block') throw new Error('The current refund cap blocks this reply. Recheck the draft.');
+    if (decision === 'approve') {
+      if (Object.entries(draft.rules_versions).some(([domain, v]) => state.files[domain].version !== v)) throw new Error('Rules changed. Recheck the draft before approving.');
+      if (item.intent === 'refund' && evaluateRefund(item.amount_cents, state.compiled) === 'block') throw new Error('The current refund cap blocks this reply. Recheck the draft.');
+    }
     item.status = decision === 'approve' ? 'approved' : 'escalated';
     item.decided = true;
     audit(item, decision === 'approve' ? 'Reply approved locally' : 'Reply rejected', decision === 'approve' ? `${item.customer} / draft v${draft.version}. No message sent. No payment made.` : `${item.customer} / escalated to owner. No message sent.`, decision === 'approve' ? 'pass' : 'review');
     return snapshot();
   }
   reset();
-  return { mode: 'demo', snapshot, inject, selectDomain, selectCitation, saveRules, recheck, review, reset };
+  refresh();
+  return { mode: 'demo', snapshot, refresh, inject, selectDomain, selectCitation, saveRules, recheck, review, reset };
 }
