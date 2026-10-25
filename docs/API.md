@@ -376,7 +376,7 @@ the demo's labeled **"unsafe suggestion"** fixture. The model proposes; this dec
 |---|---|
 | `new`, `held`, `blocked` | accepted: normal drafting, and the UI's **Recheck** after a rules edit |
 | `sent`, `quote_sent` | accepted as a follow-up; the case goes back to `held` for approval |
-| `escalated` | **409** `case_not_draftable`: a person owns it (`human_now`, or the owner rejected the draft). Handle it outside the queue in v1 |
+| `escalated` | **409** `case_not_draftable`: a person owns it (`human_now`, or the owner rejected the draft). Its draft is in the approval queue, marked urgent |
 | `approved` | **409** `case_not_draftable`: a reply is queued to send. Wait for `sent`, then draft a follow-up |
 
 How the new draft's `status` is decided:
@@ -424,7 +424,7 @@ curl -X POST http://127.0.0.1:3000/api/cases/$CASE_ID/drafts \
 
 ### `GET /api/approvals`
 
-Drafts waiting for the owner: the newest draft of every `held` case, oldest first.
+Drafts waiting for the owner: the newest undecided draft of every `held` **and `escalated`** case. **Escalated cases come first, marked `urgent: true`** (an emergency, a lawyer, an unknown request), then the rest, oldest first. The owner is the person an escalation goes to: **Approve reply** sends an escalated draft like any other (an emergency's "call 911 now"), and **Reject** keeps the case `escalated` for them to handle in person, out of the queue for good.
 
 ```json
 [
@@ -432,6 +432,8 @@ Drafts waiting for the owner: the newest draft of every `held` case, oldest firs
     "draft_id": "…",
     "case_id": "…",
     "draft_version": 1,
+    "case_status": "held",
+    "urgent": false,
     "rules_version": 3,
     "domain": "support",
     "customer": "Dana",
@@ -474,7 +476,7 @@ changed since, the approval is void:
   after this draft was checked; it goes back through the gate
 - `422 { "error": "blocked", "policy_id": "REFUND-CAP" }`: the gate re-ran with the
   current rules and refuses it
-- `409 { "error": "not_awaiting_approval", "case_status": "…" }`: the case is not held
+- `409 { "error": "not_awaiting_approval", "case_status": "…" }`: the case is neither `held` nor `escalated` (for example `blocked` or already `sent`)
 - `400` for a bad `decision` or a missing version
 
 After an approval the reply is sent at once: the case moves to `sent` and the reply
