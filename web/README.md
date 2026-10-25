@@ -48,8 +48,14 @@ show a notice; they never silently switch to fixtures.
 
 1. **New patient** posts the inquiry; approve it and the reply appears in the thread.
 2. **$500 refund** is blocked by REFUND-CAP ($200, company.rules.md).
-3. Edit `max_amount_cents: 20000` to `60000` in company.rules.md and save, then
-   **Re-run same request**: BLOCK becomes REVIEW, held for the owner.
+3. In company.rules.md, change the limit in **both** places, then save:
+   - the policy line: `max_amount_cents: 20000` to `60000`
+   - the REFUND-CAP sentence: "never refund more than $200" to "$600"
+
+   Then **Re-run same request**: BLOCK becomes REVIEW, held for the owner. Edit both
+   lines: the gate reads the number, but the AI reads the whole file, so a stale
+   "$200" sentence can end up quoted in its reply. Nothing checks yet that the
+   two match.
 4. Close on the Activity tab and the header counts.
 
 The Simulate buttons post labeled synthetic messages and scripted drafts to the real
