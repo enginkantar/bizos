@@ -112,7 +112,7 @@ h2, h3, h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; lette
 .case-head > div { flex: 1 1 160px; min-width: 0; }
 .case-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 .case-head p { font-size: 12px; color: var(--text-muted); margin-top: 3px; overflow-wrap: break-word; }
-.case-badges { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.case-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex-shrink: 0; }
 .badge-label { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
 .notice { flex-shrink: 0; display: flex; justify-content: space-between; gap: 12px; padding: 8px 20px; background: var(--accent-soft); color: var(--accent-primary-hover); font-size: 13px; border-bottom: 1px solid var(--border-subtle); }
 .notice.error { background: var(--status-err-bg); color: var(--status-err-text); }
@@ -170,7 +170,8 @@ h2, h3, h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; lette
 .file-select select { font: 500 13px var(--font-mono); padding: 5px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-surface); }
 #rules-text { flex: 1; min-height: 260px; resize: vertical; font: 12.5px/20px var(--font-mono); padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-canvas); }
 #rules-text:focus { border-color: var(--border-focus); outline: none; }
-.editor-actions { display: flex; align-items: center; gap: 8px; }
+.editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.editor-actions .hint { flex-basis: 100%; }
 .form-error:empty { display: none; }
 .form-error { color: var(--status-err-text); font-size: 13px; }
 .diff { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 12px; display: grid; gap: 3px; }

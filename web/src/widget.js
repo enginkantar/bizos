@@ -3,6 +3,8 @@
 // Case status, drafts, gate reasons, the outbox and reply_to never reach the DOM,
 // even though GET /api/cases/:id returns them today (a messages-only route is E2).
 
+import { submitDemoMessage } from './demo-inbox.js';
+
 const POLL_MS = 2000;
 const STORE_KEY = 'bizos.widget.cases';
 
@@ -40,12 +42,12 @@ export function mergeMessages(cases) {
 }
 
 // With no server behind the page (the GitHub Pages copy), Send stays on this page: the
-// patient's words echo back with a canned reply that says plainly nothing was sent.
+// patient's words appear in the browser-local demo desk, never at a real clinic.
 export function demoExchange(text, n) {
   return [
     { id: `demo-${n}-in`, direction: 'in', text },
     { id: `demo-${n}-out`, direction: 'out', demo: true,
-      text: 'This is an offline demo, so your message did not reach the clinic. With the BizOS server running, the front desk drafts a reply under the clinic\'s rules and a team member checks it before it is sent.' },
+      text: 'This is an offline demo. Your message is saved in this browser for the demo owner desk. It did not reach the clinic, no AI ran, and no real reply was sent.' },
   ];
 }
 
@@ -228,6 +230,14 @@ function start() {
       return;
     }
     if (demo) {
+      try {
+        submitDemoMessage(buildEnvelope({ messageId: crypto.randomUUID(), name: nameInput.value, email, text }));
+      } catch {
+        errorLine.textContent = 'Demo message not saved. Allow browser storage to share it with the demo desk.';
+        errorLine.hidden = false;
+        return;
+      }
+      errorLine.hidden = true;
       demoMessages.push(...demoExchange(text, demoMessages.length));
       textInput.value = '';
       textInput.focus();

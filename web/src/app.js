@@ -102,7 +102,7 @@ function queue() {
       <button class="sim" data-inject="sales">New patient</button><button class="sim warn" data-inject="unsafe">$500 refund</button>
       <button class="sim" data-inject="hours">Hours</button><button class="sim" data-inject="gap">Coverage</button></div>
       ${store.mode === 'demo' ? '<div class="sim-reset"><button class="link" id="empty-demo">Start empty</button><button class="link" id="reset-demo">Reset demo</button></div>' : ''}
-      <small>${store.mode === 'demo' ? 'Fixture simulation in this page. Nothing is sent.' : 'Posts a synthetic message and a scripted draft to the real gate. No model call.'}</small></div></aside>`;
+      <small>${store.mode === 'demo' ? 'Browser-local simulation. Widget submissions appear here. No AI runs; nothing is sent.' : 'Posts a synthetic message and a scripted draft to the real gate. No model call.'}</small></div></aside>`;
 }
 
 function thread(item) {
@@ -326,7 +326,7 @@ document.addEventListener('submit', async (event) => {
 });
 
 render();
-if (store.mode === 'live') {
+{
   // A setTimeout chain, so a slow poll never overlaps the next one.
   const tick = async () => {
     if (!document.activeElement?.closest('form') && !pending) {

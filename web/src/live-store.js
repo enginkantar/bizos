@@ -1,4 +1,10 @@
 import { createDemoStore, indexRules } from './demo-store.js';
+import { readDemoMessages } from './demo-inbox.js';
+
+function safeDemoInbox() {
+  try { return readDemoMessages(); }
+  catch { return []; } // Browsers that deny storage can still show the fixture desk.
+}
 
 export async function request(path, body, method = 'POST') {
   const response = await fetch(`/api/${path}`, {
@@ -58,8 +64,8 @@ export async function connectStore() {
   // Only the initial connection can select fixtures. Later failures preserve live data.
   let rules;
   try { rules = await request('rules'); }
-  catch { return createDemoStore(); }
-  if (!Array.isArray(rules)) return createDemoStore();
+  catch { return createDemoStore({ readInbox: safeDemoInbox }); }
+  if (!Array.isArray(rules)) return createDemoStore({ readInbox: safeDemoInbox });
   let domain = rules.find(r => r.domain === 'company')?.domain ?? rules[0]?.domain;
   let state = { cases: [], audit: [], approvals: [], ruleIndex: {}, domains: rules, rules: { version: null, text: '', compiled: {}, policy: [], diff: [] } };
   let savedDiff = [];

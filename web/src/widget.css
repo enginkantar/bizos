@@ -13,7 +13,7 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-body { margin: 0; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+body { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 16px; background: var(--bg); }
 h1, p { margin: 0; }
 button, input, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 3px solid var(--teal); outline-offset: 2px; }
@@ -48,6 +48,7 @@ button, input, textarea { font: inherit; color: inherit; }
 input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; background: #fff; }
 input:focus, textarea:focus { border-color: var(--teal); outline: none; box-shadow: 0 0 0 3px rgb(13 148 136 / .18); }
 .chat-send { display: flex; gap: 8px; align-items: stretch; }
+.chat-send textarea { min-width: 0; }
 textarea { resize: none; font-size: 14px; line-height: 1.4; }
 .chat-send button { flex: none; padding: 0 16px; border: 0; border-radius: 8px; background: var(--teal); color: #fff; font-weight: 650; cursor: pointer; }
 .chat-send button:hover { background: var(--teal-dark); }
