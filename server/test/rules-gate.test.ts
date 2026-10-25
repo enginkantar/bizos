@@ -125,8 +125,13 @@ test("company policies bind every domain, and applies_to scopes them", () => {
   assert.equal(d.verdict, "block");
   assert.equal(d.policyId, "DISCOUNT-CAP");
   assert.deepEqual(d.rulesVersions, { support: 3, company: 1 });
-  // A $60 refund is under every refund limit, and DISCOUNT-CAP is not about refunds.
-  assert.equal(evaluate(store, { domain: "support", type: "refund", amountCents: 6000 }).verdict, "pass");
+  // A $40 discount is a type the rules name, under every limit: it passes.
+  assert.equal(evaluate(store, { domain: "support", type: "discount", amountCents: 4000 }).verdict, "pass");
+  // DISCOUNT-CAP scopes the rules by type, and none of them names "refund", so a
+  // $60 refund fails closed to review (issue #7) even though no limit trips.
+  const r = evaluate(store, { domain: "support", type: "refund", amountCents: 6000 });
+  assert.equal(r.verdict, "review");
+  assert.match(r.reason, /"refund" is not an action type any rule names \(discount\)/);
   done();
 });
 

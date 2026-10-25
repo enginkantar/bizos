@@ -412,3 +412,10 @@ policy:
   the owner.
 - **The gate fails closed:** a department with no rules file goes to review, and a
   malformed amount is blocked.
+- **An action type no rule names goes to review** whenever the rules in force scope any
+  limit with `applies_to`. The type comes from the model, so a $500 refund proposed as
+  `store_credit` must not skip the refund limits (issue #7). Rules that never use
+  `applies_to` cover every type with every limit, so nothing changes there.
+- **Keep one cap without `applies_to`** in `company.rules.md` as a backstop: it blocks any
+  money action over it, whatever the label. The dental pack's `MONEY-CAP` blocks anything
+  over $5,000.
