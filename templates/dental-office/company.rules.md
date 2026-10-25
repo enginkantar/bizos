@@ -1,7 +1,7 @@
 ---
 domain: company
 owner: office-manager@example.com
-version: 2
+version: 3
 updated: 2026-10-25
 review_by: 2027-01-25
 escalate_to: "Office manager, front desk line"
@@ -52,7 +52,7 @@ be a dentist.
   the practice systems, never from this file.
 
 ## ESCALATION TRIGGERS
-- Mentions of a lawyer, malpractice, a complaint about treatment, a chargeback
+- ESCALATE-LEGAL: mentions of a lawyer, malpractice, a complaint about treatment, a chargeback
   or a records request → a person, immediately.
-- Anyone who says they are a dentist, insurer or vendor asking about a patient →
+- ESCALATE-IDENTITY: anyone who says they are a dentist, insurer or vendor asking about a patient →
   a person, immediately.

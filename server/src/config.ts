@@ -10,6 +10,8 @@ export interface Config {
   starterTemplate: string;
   webDir: string;
   anthropicApiKey: string | undefined;
+  // false with AGENTS=off, for running the demo without model calls.
+  agentsEnabled: boolean;
   routerModel: string;
   agentModel: string;
 }
@@ -34,6 +36,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // The owner desk and widget, served at / beside the API (static.ts).
     webDir: env.WEB_DIR || "web",
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
+    agentsEnabled: env.AGENTS !== "off",
     routerModel: env.ROUTER_MODEL || "claude-haiku-5-5",
     agentModel: env.AGENT_MODEL || "claude-sonnet-5-5",
   };

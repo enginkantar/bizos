@@ -28,6 +28,7 @@ npm start                 # or `npm run dev` to restart on every save
 | `STARTER_TEMPLATE` | `dental-office` | on first start, if `RULES_DIR` doesn't exist, copies `templates/<name>/` into it. Empty = never |
 | `DB_PATH` | `data/bizos.db` | one SQLite file; gitignored, never commit it |
 | `ROUTER_MODEL` / `AGENT_MODEL` | `claude-haiku-5-5` / `claude-sonnet-5-5` | Haiku routes, Sonnet drafts |
+| `AGENTS` | on | `off` stops all model calls even with a key set. Without a key the agents are off anyway, and the startup log says which |
 
 **Don't hold a write transaction on `DB_PATH` while the server runs.** Reading the database
 in a viewer or a `sqlite3` shell is fine. But a `BEGIN` / `BEGIN IMMEDIATE` left open, or a
@@ -70,6 +71,7 @@ Checks before a PR: `npm run build` (type-check), `npm test`, and
 | `PUT /api/rules/:domain` | ✅ live | save an edited rules file |
 | `GET /api/audit` | ✅ live | the latest 100 events |
 | `POST /api/cases/:id/drafts` | ✅ live | an agent (or a test fixture) proposes a reply; the gate decides |
+| `POST /api/cases/:id/agent` | ✅ live | run the agents on a `new` case now and wait for the outcome |
 | `GET /api/approvals` | ✅ live | drafts waiting for the owner |
 | `POST /api/approvals/:id` | ✅ live | approve or reject one draft |
 
@@ -266,6 +268,58 @@ The latest 100 events, newest first.
 ```
 
 `detail` is a JSON string.
+
+### The agents
+
+With `ANTHROPIC_API_KEY` set, every new message (not a duplicate) runs the agents in the
+background. `POST /api/inbox` still answers at once, and the draft shows up in the queue a
+few seconds later; the UI's polling picks it up. The steps:
+
+1. **Haiku routes** the message to a department, a rules file other than `company`. The
+   case becomes `routed`.
+2. **Sonnet drafts** a reply from that department's rules and `company.rules.md`, in the
+   #29 shape: `reply`, `evidence`, `missing_info`, `action`, `route`.
+3. The draft goes through `POST /api/cases/:id/drafts` logic, so the citation, quote, text
+   amount and gate checks all apply. **The models only propose; nothing is sent without
+   Approve reply.**
+
+A person gets the case (`escalated`) in two ways:
+- **An escalation trigger the router is sure of** (an emergency, a lawyer, a dispute). The
+  drafter **still writes the reply** from the department's rules, so an emergency gets
+  EMERGENCY-1's "call 911 or go to an emergency room now". The case is escalated whatever
+  the drafter routes.
+- **No usable answer.** No department fits, the router's confidence is under 0.7, a model
+  declines, or a model's answer is unusable. The case gets the holding reply *"Thanks for
+  your message. A member of our team will get back to you shortly."*
+
+Either way, the draft's `gate_reason` starts with `escalated: …`, giving the reason.
+
+If a model call **fails** (network, rate limit), the case stays `new`, `agent_failed` is
+written to the audit log, and nothing is lost.
+
+**Audit events:** `agent_routed` (department, confidence, urgency, reason), `agent_escalated`
+(reason), `agent_failed` (error), then the usual `drafted`.
+
+**Prompts** live in one file, `server/src/agents/prompts.ts` (Siddharth's): both system
+prompts, both output schemas, and the effort each model uses.
+
+### `POST /api/cases/:id/agent`
+
+Runs the agents on one case and waits, for a case that arrived while the key was missing
+or a model call failed. Only a `new` case is drafted; any other case returns
+`outcome: "skipped"`.
+
+```json
+{
+  "outcome": "drafted",
+  "reason": null,
+  "department": "front-desk",
+  "draft": { "draft_id": "…", "version": 1, "verdict": "pass", "policy_id": null, "reasons": ["…"], "status": "held" }
+}
+```
+
+`outcome` is `drafted`, `escalated` (with `reason`), `skipped` (with `reason`) or `failed`
+(HTTP 502, with `reason`). Without agents: `503 { "error": "agents_off" }`.
 
 ### `POST /api/cases/:id/drafts`
 
