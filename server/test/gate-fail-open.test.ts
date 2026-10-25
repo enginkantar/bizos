@@ -102,7 +102,7 @@ test("#22.3 a department with no rules file still gets the company caps", () => 
   assert.equal(known.policyId, "WRITE-OFF-CAP");
   assert.equal(unknown.verdict, "block", "before the fix: review, with no policy - the cap was dodged");
   assert.equal(unknown.policyId, "WRITE-OFF-CAP");
-  assert.deepEqual(unknown.rulesVersions, { company: 3 });
+  assert.deepEqual(unknown.rulesVersions, { company: 4 });
   const small = evaluate(store, { domain: "no-such-dept", type: "write_off", amountCents: 10000 });
   assert.equal(small.verdict, "review", "under every company cap, an unknown department still waits for a person");
   assert.match(small.reason, /no active rules for no-such-dept/);

@@ -1,12 +1,11 @@
 ---
 domain: billing
 owner: office-manager@example.com
-version: 2
+version: 3
 updated: 2026-10-25
 review_by: 2027-01-25
 escalate_to: "Billing coordinator"
 policy:
-  REFUND-CAP:             { max_amount_cents: 20000, above: block, applies_to: refund }
   REFUND-APPROVAL:        { over_cents: 12000, action: draft_for_approval, applies_to: refund }
   DISCOUNT-CAP:           { max_amount_cents: 15000, above: block, applies_to: discount }
   DISCOUNT-APPROVAL:      { over_cents: 5000, action: draft_for_approval, applies_to: discount }
@@ -19,8 +18,6 @@ payment plans, refunds of overpayments and courtesy discounts. Formal, precise,
 and you never guess a number.
 
 ## HARD RULES (never break — refuse and escalate instead)
-- REFUND-CAP: never refund more than $200 in one request. Larger refunds are
-  handled by the billing coordinator, by phone.
 - REFUND-APPROVAL: refunds over $120 wait for the billing coordinator.
 - DISCOUNT-CAP: never offer a courtesy discount above $150.
 - DISCOUNT-APPROVAL: courtesy discounts over $50 wait for the billing
