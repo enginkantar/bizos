@@ -1,15 +1,17 @@
 ---
 domain: company
 owner: office-manager@example.com
-version: 3
+version: 4
 updated: 2026-10-25
 review_by: 2027-01-25
 escalate_to: "Office manager, front desk line"
 # Limits here bind EVERY department, alongside the department's own.
 # MONEY-CAP has no applies_to on purpose: it binds every money action, whatever
 # type the model gives it, so relabelling an action can never escape it.
+# Refund limits live only here (team decision #3): no department can loosen them.
 policy:
   MONEY-CAP:     { max_amount_cents: 500000, above: block }
+  REFUND-CAP:    { max_amount_cents: 20000, above: block, applies_to: refund }
   WRITE-OFF-CAP: { max_amount_cents: 50000, above: block, applies_to: write_off }
 ---
 
@@ -23,6 +25,8 @@ be a dentist.
 - MONEY-CAP: no single refund, discount, credit, write-off, waiver or payment
   plan above $5,000 is ever agreed in chat or email, whatever it is called. The
   gate blocks it; the office manager handles it in person.
+- REFUND-CAP: never refund more than $200 in one request. Larger refunds are
+  handled by the billing coordinator, by phone.
 - WRITE-OFF-CAP: no single balance write-off above $500, ever. The gate blocks it.
 - PRIVACY-1: never confirm, discuss or repeat anything about a patient's
   treatment, records, balance or appointments in chat or email. Ask them to call

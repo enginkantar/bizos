@@ -38,8 +38,9 @@ Demo controls submit labeled synthetic inbound messages and canned suggestions
 to the real gate in live mode. They do not call a model. The local fixture editor
 is intentionally limited to the displayed amounts and hours; it is a simulation,
 not a YAML parser or a security boundary. Live edits support the full server format.
-The fixtures illustrate the team's $200 REFUND-CAP storyline. The current starter
-pack has different money policies; live mode always shows the real server verdict.
+The fixtures illustrate the team's $200 REFUND-CAP storyline. The dental starter
+pack also keeps REFUND-CAP in company.rules.md, but REFUND-APPROVAL in
+billing.rules.md; live mode always shows the real server verdict.
 
 `npm test` runs server and dependency-free web behavioral tests. `npm run build`
 type-checks the server; `npm run lint` checks JavaScript syntax.

@@ -46,6 +46,8 @@ test("the dental office enforces what its prose says", () => {
   // Company limits bind every department.
   assert.equal(check("billing", "write_off", 60000), "block WRITE-OFF-CAP");
   assert.equal(check("front-desk", "write_off", 60000), "block WRITE-OFF-CAP");
+  // Refund limits live only in company.rules.md (team decision #3).
+  assert.equal(check("front-desk", "refund", 50000), "block REFUND-CAP");
 });
 
 test("first start copies the starter pack, and never touches an existing folder", () => {
