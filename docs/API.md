@@ -404,6 +404,10 @@ policy:
 - `company.rules.md` limits apply to every department, alongside the department's own.
 - **Unknown keys, non-whole-cent amounts and a missing `policy:` are refused**, with every
   problem listed. Use `policy: {}` for a department with no limits.
+- **An empty `policy:` and a rule ID outside the block are refused too.** One indentation
+  slip (`REFUND-CAP:` not indented under `policy:`) used to load the file with zero limits
+  and save with a 200. Now the save gets a 422 naming the line, and the old limits stay in
+  force (issue #22).
 - A policy ID that the prose never mentions loads, with a warning: the prose is the
   human-readable mirror of the block.
 - **A rule line starts with its ID:** `- REFUND-CAP: …` or `- [S-2] …`. Those IDs and the
@@ -412,6 +416,11 @@ policy:
   the owner.
 - **The gate fails closed:** a department with no rules file goes to review, and a
   malformed amount is blocked.
+  - A department with no rules file **still gets the company limits**: a company block
+    still blocks. The department name comes from the model, so an invented one must not
+    dodge `company.rules.md`.
+  - If `company.rules.md` exists but **has never loaded**, every department goes to review
+    until it's fixed. If it broke after loading, its last good version stays in force.
 - **An action type no rule names goes to review** whenever the rules in force scope any
   limit with `applies_to`. The type comes from the model, so a $500 refund proposed as
   `store_credit` must not skip the refund limits (issue #7). Rules that never use
