@@ -57,11 +57,9 @@ Checks before a PR: `npm run build` (type-check), `npm test`, and
 | `GET /api/rules/:domain` | ✅ live | one rules file, including its text |
 | `PUT /api/rules/:domain` | ✅ live | save an edited rules file |
 | `GET /api/audit` | ✅ live | the latest 100 events |
-| `GET /api/approvals` | 🚧 next PR | drafts waiting for the owner |
-| `POST /api/approvals/:id` | 🚧 next PR | approve or reject one draft |
-
-Until the next PR lands, the 🚧 routes answer `501 { "error": "not_implemented" }`.
-Build the UI against the shapes below; they are the contract.
+| `POST /api/cases/:id/drafts` | ✅ live | an agent (or a test fixture) proposes a reply; the gate decides |
+| `GET /api/approvals` | ✅ live | drafts waiting for the owner |
+| `POST /api/approvals/:id` | ✅ live | approve or reject one draft |
 
 ### `GET /api/health`
 
@@ -162,8 +160,11 @@ The case, plus everything attached to it. `404 { "error": "case_not_found" }` if
       "rules_version": 3,
       "rule_citations": "[\"REFUND-APPROVAL\"]",
       "amount_cents": 15000,
+      "action_type": "refund",
       "gate_verdict": "review",
-      "gate_policy_id": "REFUND-APPROVAL"
+      "gate_policy_id": "REFUND-APPROVAL",
+      "gate_reason": "$150.00 is over REFUND-APPROVAL ($120.00)",
+      "rules_versions": "{\"support\":3}"
     }
   ],
   "outbox": [
@@ -248,7 +249,66 @@ The latest 100 events, newest first.
 
 `detail` is a JSON string.
 
-### 🚧 `GET /api/approvals` (next PR)
+### `POST /api/cases/:id/drafts`
+
+The one door every proposed reply comes through: department agents call it, and so does
+the demo's labeled **"unsafe suggestion"** fixture. The model proposes; this decides.
+
+```json
+{
+  "domain": "support",
+  "text": "Sorry about that! I can refund $150.00 to your card.",
+  "rule_citations": ["REFUND-APPROVAL"],
+  "action": { "type": "refund", "amount_cents": 15000 },
+  "route": "draft_for_approval"
+}
+```
+
+| field | required | meaning |
+|---|---|---|
+| `domain` | yes | which rules file applies |
+| `text` | yes | the reply |
+| `rule_citations` | no | rule IDs the reply relied on. **None, or an ID not in the active rules, holds it for the owner** |
+| `action` | no | the money the reply commits to. The gate checks `amount_cents` against the `policy:` limits for `type` |
+| `route` | no | the orchestrator's verdict: `auto_reply`, `draft_for_approval` (default) or `human_now` |
+
+`201`:
+
+```json
+{
+  "draft_id": "…", "version": 1,
+  "verdict": "review", "policy_id": "REFUND-APPROVAL",
+  "reasons": ["$150.00 is over REFUND-APPROVAL ($120.00)"],
+  "status": "held", "outbox_id": null
+}
+```
+
+How `status` is decided:
+
+| when | `status` |
+|---|---|
+| the gate says `block` | `blocked`: nothing is queued, whatever the route |
+| `route: human_now` | `escalated` |
+| anything to review, or `route: draft_for_approval` | `held`: in the approval queue |
+| `pass` and `route: auto_reply` | `approved`, queued and sent at once |
+
+A reply is also held, never sent, when its **text** mentions a dollar amount above the
+validated `amount_cents` (or any amount when there is no `action`), when it cites no rule,
+or when it cites a rule that isn't in the active rules files.
+
+`404 { "error": "case_not_found" }`; `400` for a missing field.
+
+The **$500 fixture** for the demo:
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/cases/$CASE_ID/drafts \
+  -H "content-type: application/json" \
+  -d '{"domain":"support","text":"Sure, refunding $500 now.","rule_citations":["REFUND-CAP"],
+       "action":{"type":"refund","amount_cents":50000},"route":"auto_reply"}'
+# -> "verdict": "block", "policy_id": "REFUND-CAP", "status": "blocked"
+```
+
+### `GET /api/approvals`
 
 Drafts waiting for the owner: the newest draft of every `held` case, oldest first.
 
@@ -268,12 +328,16 @@ Drafts waiting for the owner: the newest draft of every `held` case, oldest firs
     "rule_citations": ["REFUND-APPROVAL"],
     "gate_verdict": "review",
     "gate_policy_id": "REFUND-APPROVAL",
+    "gate_reason": "$150.00 is over REFUND-APPROVAL ($120.00)",
     "created_at": "…"
   }
 ]
 ```
 
-### 🚧 `POST /api/approvals/:draft_id` (next PR)
+`rule_citations` is already a list here. `gate_reason` says why it is waiting: show it
+under the draft.
+
+### `POST /api/approvals/:draft_id`
 
 The **"Approve reply"** button. It approves sending a message, never a payment.
 
@@ -292,6 +356,13 @@ changed since, the approval is void:
   after this draft was checked; it goes back through the gate
 - `422 { "error": "blocked", "policy_id": "REFUND-CAP" }`: the gate re-ran with the
   current rules and refuses it
+- `409 { "error": "not_awaiting_approval", "case_status": "…" }`: the case is not held
+- `400` for a bad `decision` or a missing version
+
+After an approval the reply is sent at once: the case moves to `sent` and the reply
+appears in its `messages` with `direction: "out"`. **The gate runs again at send time**, so
+if the rules were tightened in between, the send fails, the case becomes `blocked`, and the
+outbox entry's `last_error` says which rule. Replies only go to the case's `reply_to`.
 
 ---
 

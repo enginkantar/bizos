@@ -63,8 +63,13 @@ CREATE TABLE IF NOT EXISTS drafts (
   rules_version   INTEGER NOT NULL,
   rule_citations  TEXT NOT NULL DEFAULT '[]',
   amount_cents    INTEGER,
+  action_type     TEXT,
   gate_verdict    TEXT CHECK (gate_verdict IN ('pass', 'review', 'block')),
   gate_policy_id  TEXT,
+  gate_reason     TEXT,
+  -- Every rules file the gate consulted, {"support":3,"company":1}. An approval
+  -- is void if ANY of them changed, not just the domain's own file.
+  rules_versions  TEXT NOT NULL DEFAULT '{}',
   created_at      TEXT NOT NULL,
   UNIQUE (case_id, version)
 );
@@ -118,7 +123,25 @@ export function openDb(path: string): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// CREATE TABLE IF NOT EXISTS never changes a table that already exists, so a
+// database made by an earlier build keeps its old columns, and the first insert
+// naming a new one fails. Teammates have demo data in data/bizos.db; add what is
+// missing instead of asking everyone to delete it.
+const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
+  ["drafts", "action_type", "TEXT"],
+  ["drafts", "gate_reason", "TEXT"],
+  ["drafts", "rules_versions", "TEXT NOT NULL DEFAULT '{}'"],
+];
+
+function migrate(db: DatabaseSync) {
+  for (const [table, column, definition] of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 const now = () => new Date().toISOString();

@@ -66,7 +66,7 @@ test("the schema refuses a second approval of one draft version and a second sen
   done();
 });
 
-test("the HTTP API: inbox dedupes, cases and audit read back, approvals stub says 501", async () => {
+test("the HTTP API: inbox dedupes, cases and audit read back", async () => {
   const { db, done } = tempDb();
   const server = createApp(db, loadConfig({}));
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
@@ -98,7 +98,7 @@ test("the HTTP API: inbox dedupes, cases and audit read back, approvals stub say
     const auditRows = await (await fetch(`${base}/api/audit`)).json() as { event: string }[];
     assert.deepEqual(auditRows.map((a) => a.event), ["received"]);
 
-    assert.equal((await fetch(`${base}/api/approvals`)).status, 501);
+    assert.deepEqual(await (await fetch(`${base}/api/approvals`)).json(), [], "nothing held yet");
     assert.equal((await fetch(`${base}/api/rules/sales`, { method: "PUT" })).status, 400, "a save with no content");
     assert.equal((await fetch(`${base}/api/inbox`)).status, 405);
     assert.equal((await fetch(`${base}/nope`)).status, 404);
