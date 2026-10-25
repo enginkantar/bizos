@@ -81,7 +81,7 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
   const escalate = (reason: string, domain = SHARED): AgentOutcome => {
     audit(db, "agent_escalated", caseId, { reason });
     const draft = createDraft(db, store, {
-      caseId, domain, text: P.HOLDING_REPLY, ruleCitations: [], route: "human_now",
+      caseId, domain, text: P.HOLDING_REPLY, ruleCitations: [], route: "human_now", notes: [`escalated: ${reason}`],
     });
     return { kind: "escalated", reason, draft };
   };
@@ -107,7 +107,14 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
   });
   if (!department) return escalate(`router: no department fits (${isStr(v?.reason) ? v.reason : "no reason"})`);
   if (confidence < P.ROUTER_MIN_CONFIDENCE) return escalate(`router: unsure (${confidence}) it is ${department}`, department);
-  if (v.route === "human_now") return escalate(`router: ${isStr(v.reason) ? v.reason : "needs a person"}`, department);
+  // 🔴 An escalation the router is sure about still gets a DRAFTED reply. The
+  //    live run showed why: a spreading jaw swelling went to a person with
+  //    the generic holding reply, while EMERGENCY-1 says to tell them to call
+  //    911 now. The drafter follows the department's escalation rules; the
+  //    case still goes to a person (human_now), whatever the drafter routes.
+  const routerEscalation = v.route === "human_now"
+    ? `router: ${isStr(v.reason) ? v.reason : "needs a person"}`
+    : null;
   db.prepare("UPDATE cases SET status = 'routed', domain = ?, updated_at = ? WHERE id = ? AND status = 'new'")
     .run(department, new Date().toISOString(), caseId);
 
@@ -126,9 +133,14 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
   if (typeof d === "string") return escalate(`drafter: unusable answer (${d})`, department);
 
   // 3. The model proposes; createDraft decides (citations, quotes, the gate).
+  if (routerEscalation) audit(db, "agent_escalated", caseId, { reason: routerEscalation });
   const draft = createDraft(db, store, {
     caseId, domain: department, text: d.reply, ruleCitations: [], evidence: d.evidence,
-    missingInfo: d.missingInfo, action: d.action, route: d.route,
+    missingInfo: d.missingInfo, action: d.action,
+    route: routerEscalation ? "human_now" : d.route,
+    notes: routerEscalation ? [`escalated: ${routerEscalation}`] : undefined,
   });
-  return { kind: "drafted", department, draft };
+  return routerEscalation
+    ? { kind: "escalated", reason: routerEscalation, draft }
+    : { kind: "drafted", department, draft };
 }

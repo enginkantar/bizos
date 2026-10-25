@@ -120,7 +120,6 @@ test("an invented quote from the model is held with the reason", async () => {
 for (const [name, router, expectDomain] of [
   ["no department fits", routeTo("unknown"), "company"],
   ["the router is unsure", routeTo("billing", { confidence: 0.4 }), "billing"],
-  ["an escalation trigger (lawyer)", routeTo("billing", { route: "human_now", reason: "mentions a lawyer" }), "billing"],
   ["the router declines", { ok: false, reason: "the model declined (cyber)" } as JsonResult, "company"],
 ] as const) {
   test(`${name}: escalated with a holding reply, nothing drafted by a model`, async () => {
@@ -133,9 +132,35 @@ for (const [name, router, expectDomain] of [
     assert.equal(w.lastDraft(id).text, HOLDING_REPLY);
     assert.equal(w.lastDraft(id).domain, expectDomain);
     assert.equal(calls.length, 1, "the drafter was never called");
+    // The reason says why it went to a person - not "rules gap", which would
+    // mislabel it on the owner's screen.
+    assert.match(w.lastDraft(id).gate_reason, /^escalated: router: /);
+    assert.doesNotMatch(w.lastDraft(id).gate_reason, /rules gap/);
     w.done();
   });
 }
+
+test("an escalation trigger the router is sure of still gets a drafted reply, and goes to a person", async () => {
+  // Found live: an emergency got the generic holding reply instead of
+  // EMERGENCY-1's "call 911 now", because escalation skipped the drafter.
+  const w = world();
+  const emergencyReply = "Please call 911 or go to an emergency room now. Then call us for a same-day emergency appointment.";
+  const { models, calls } = fakeModels({
+    router: routeTo("front-desk", { urgency: "critical", route: "human_now", reason: "matches EMERGENCY-1" }),
+    // Even if the drafter says draft_for_approval, the router's escalation wins.
+    drafter: draftAnswer({ reply: emergencyReply, evidence: [{ rule_id: "EMERGENCY-1", quote: "call 911 or go to an emergency room now" }], missing_info: [] }),
+  });
+  const id = w.kase("My jaw is swollen and it's spreading to my eye");
+  const out = await runAgents(w.db, w.store, models, id);
+  assert.equal(out.kind, "escalated");
+  assert.equal(calls.length, 2, "the drafter ran");
+  assert.equal(w.row(id).status, "escalated");
+  const d = w.lastDraft(id);
+  assert.equal(d.text, emergencyReply);
+  assert.match(d.gate_reason, /^escalated: router: matches EMERGENCY-1/);
+  assert.deepEqual(JSON.parse(d.rule_citations), ["EMERGENCY-1"]);
+  w.done();
+});
 
 test("an unusable drafter answer escalates instead of drafting", async () => {
   const w = world();

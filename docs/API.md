@@ -283,14 +283,16 @@ few seconds later; the UI's polling picks it up. The steps:
    amount and gate checks all apply. **The models only propose; nothing is sent without
    Approve reply.**
 
-A person gets the case instead (it's `escalated`, with the holding reply *"Thanks for your
-message. A member of our team will get back to you shortly."* for the owner to approve or
-replace) when:
-- no department fits,
-- the router's confidence is under 0.7,
-- an escalation trigger applies (a lawyer, fraud, an emergency…),
-- a model declines, or
-- a model's answer is unusable.
+A person gets the case (`escalated`) in two ways:
+- **An escalation trigger the router is sure of** (an emergency, a lawyer, a dispute). The
+  drafter **still writes the reply** from the department's rules, so an emergency gets
+  EMERGENCY-1's "call 911 or go to an emergency room now". The case is escalated whatever
+  the drafter routes.
+- **No usable answer.** No department fits, the router's confidence is under 0.7, a model
+  declines, or a model's answer is unusable. The case gets the holding reply *"Thanks for
+  your message. A member of our team will get back to you shortly."*
+
+Either way, the draft's `gate_reason` starts with `escalated: …`, giving the reason.
 
 If a model call **fails** (network, rate limit), the case stays `new`, `agent_failed` is
 written to the audit log, and nothing is lost.

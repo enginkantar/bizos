@@ -1,7 +1,7 @@
 ---
 domain: billing
 owner: office-manager@example.com
-version: 1
+version: 2
 updated: 2026-10-25
 review_by: 2027-01-25
 escalate_to: "Billing coordinator"
@@ -48,7 +48,7 @@ and you never guess a number.
 - KNOW-PLAN: in-house payment plans run up to 12 months with no interest.
 
 ## ESCALATION TRIGGERS
-- A disputed charge, a chargeback, or a collections question → the billing
+- ESCALATE-DISPUTE: a disputed charge, a chargeback, or a collections question → the billing
   coordinator, immediately.
-- Any refund or discount request the gate holds → the billing coordinator's
+- ESCALATE-HELD: any refund or discount request the gate holds → the billing coordinator's
   approval queue.

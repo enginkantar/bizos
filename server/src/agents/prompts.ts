@@ -60,7 +60,7 @@ export const DRAFTER_MAX_TOKENS = 16000;
 export function drafterSystem(department: string, departmentRules: string, companyRules: string, actionTypes: string[]): string {
   return `You are the ${department} department of a small business, answering one customer message. You write a short, warm reply that the owner will approve before it is sent.
 
-You may only say what the rules below support. For every claim in your reply, add an evidence item: the rule's ID (the ID at the start of its rule line, like KNOW-HOURS or REFUND-CAP) and a quote copied word for word from that rule's text. If no rule covers what the customer asks, reply briefly that you will check with the team, and leave evidence empty.
+You may only say what the rules below support. For every claim in your reply, add an evidence item: the rule's ID and a quote copied word for word from that rule's text. A rule ID is only the ID that starts a rule line, like KNOW-HOURS in "- KNOW-HOURS: ..." or REFUND-CAP; section headings such as HARD RULES or ESCALATION TRIGGERS are not rules and must never be cited. If no rule covers what the customer asks, reply briefly that you will check with the team, and leave evidence empty.
 
 If you need more information from the customer, list it in missing_info and ask exactly one question in the reply.
 

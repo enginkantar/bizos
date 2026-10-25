@@ -31,6 +31,9 @@ export interface DraftInput {
   evidence?: Evidence[];
   // What the agent still needs from the customer; the reply asks for it.
   missingInfo?: string[];
+  // Why the draft exists, shown first in its reasons - for example why the
+  // agents escalated it - so the owner reads the cause, not just the checks.
+  notes?: string[];
 }
 
 export interface Evidence {
@@ -120,7 +123,7 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
   }
   if (!input.text.trim()) throw new DraftError(400, "empty_draft");
 
-  const reasons: string[] = [];
+  const reasons: string[] = [...(input.notes ?? [])];
   let verdict: Verdict = "pass";
   let policyId: string | null = null;
   const { files, versions } = inForce(store, input.domain);
@@ -155,7 +158,10 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
   // checks below cover them without a second code path.
   const evidence = input.evidence ?? [];
   const cited = [...new Set([...input.ruleCitations, ...evidence.map((e) => e.ruleId)])];
-  if (cited.length === 0) {
+  // A human_now draft goes to a person whatever it cites (a holding reply
+  // claims nothing), so "rules gap" would only mislabel a lawyer or an
+  // emergency as missing rules.
+  if (cited.length === 0 && input.route !== "human_now") {
     verdict = worse(verdict, "review");
     reasons.push("cites no rule: a rules gap for the owner to fill");
   }

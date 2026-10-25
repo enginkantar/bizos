@@ -1,7 +1,7 @@
 ---
 domain: front-desk
 owner: office-manager@example.com
-version: 1
+version: 2
 updated: 2026-10-25
 review_by: 2027-01-25
 escalate_to: "Front desk lead"
@@ -39,7 +39,7 @@ appointments: a person confirms every slot in the scheduling system.
 - KNOW-CHILDREN: we see children from age 3.
 
 ## ESCALATION TRIGGERS
-- Anything that sounds like EMERGENCY-1 → emergency guidance first, then a
+- ESCALATE-EMERGENCY: anything that sounds like EMERGENCY-1 → emergency guidance first, then a
   person.
-- A third cancellation by the same person, or anyone upset about a fee → a
+- ESCALATE-FEES: a third cancellation by the same person, or anyone upset about a fee → a
   person.
