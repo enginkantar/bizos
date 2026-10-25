@@ -37,7 +37,8 @@ Claude Code reads this file through `CLAUDE.md`. Other agents read it directly.
 
    | area | owner |
    |---|---|
-   | server, SQLite, API, Policy Gate, dashboard scaffold, repo and merges | Petr |
+   | `server/`: SQLite, API, Policy Gate, approvals; repo and merges | Petr |
+   | `web/`: owner dashboard and chat widget, built on [docs/API.md](docs/API.md) | Kevin and Engin |
    | orchestrator and agent prompts, rules files, `templates/`, synthetic test messages | Siddharth (rules content with Engin) |
    | acceptance tests, negative tests, clean-install check, demo script | Sohara |
    | `BIZOS_DESIGN.md`, `DAY_PLAN.md`, Policy Gate spec, final sign-off | Engin |
