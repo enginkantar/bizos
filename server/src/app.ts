@@ -6,13 +6,11 @@ import type { Config } from "./config.ts";
 import { RuleStore, ConflictError, type DomainState } from "./rulestore.ts";
 import { RulesError, type RulesFile } from "./rules.ts";
 import { lineDiff, changesOnly } from "./diff.ts";
+import { createDraft, listApprovals, decide, DraftError, type Route } from "./drafts.ts";
+import { dispatchOutbox } from "./outbox.ts";
 
-// The routes frozen at 11:00 (DAY_PLAN.md). Inbox, cases and audit are real
-// against SQLite; the rest answer 501 with the area that owns them, so the UI
-// can be built against the final shapes while the pieces land.
-
-const notYet = (route: string, owner: string): Reply =>
-  ({ status: 501, body: { error: "not_implemented", route, owner } });
+// The routes frozen at 11:00 (DAY_PLAN.md), plus POST /api/cases/:id/drafts,
+// the one door every proposed reply comes through. docs/API.md documents each.
 
 function str(v: unknown, field: string, required = true): string | undefined {
   if (v === undefined || v === null || v === "") {
@@ -89,8 +87,63 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
     };
   });
 
-  r.on("GET", "/api/approvals", () => notYet("GET /api/approvals", "server (Petr)"));
-  r.on("POST", "/api/approvals/:id", () => notYet("POST /api/approvals/:id", "server (Petr)"));
+  // DraftError carries its own status and extra fields (current_rules_version,
+  // policy_id) for the UI; anything else is a real 500.
+  const guarded = (fn: () => Reply): Reply => {
+    try {
+      return fn();
+    } catch (e) {
+      if (e instanceof DraftError) return { status: e.status, body: { error: e.message, ...e.extra } };
+      throw e;
+    }
+  };
+
+  // Where every proposed reply enters: department agents, and the demo's
+  // labeled "unsafe suggestion" fixture. The model proposes; the gate decides.
+  r.on("POST", "/api/cases/:id/drafts", (_req, { id }, body) => guarded(() => {
+    const b = (body ?? {}) as Record<string, any>;
+    const domain = str(b.domain, "domain")!;
+    const text = str(b.text, "text")!;
+    const citations = b.rule_citations ?? [];
+    if (!Array.isArray(citations) || !citations.every((c) => typeof c === "string")) {
+      throw new HttpError(400, "invalid_rule_citations");
+    }
+    let action: { type: string; amountCents: number } | undefined;
+    if (b.action !== undefined && b.action !== null) {
+      const type = str(b.action.type, "action.type")!;
+      if (!Number.isSafeInteger(b.action.amount_cents)) throw new HttpError(400, "invalid_action.amount_cents");
+      action = { type, amountCents: b.action.amount_cents };
+    }
+    const route = b.route as Route | undefined;
+    if (route !== undefined && !["auto_reply", "draft_for_approval", "human_now"].includes(route)) {
+      throw new HttpError(400, "invalid_route");
+    }
+    const res = createDraft(db, store, { caseId: id, domain, text, ruleCitations: citations, action, route });
+    if (res.outboxId) dispatchOutbox(db, store);
+    return {
+      status: 201,
+      body: {
+        draft_id: res.draftId, version: res.version, verdict: res.verdict, policy_id: res.policyId,
+        reasons: res.reasons, status: res.status, outbox_id: res.outboxId,
+      },
+    };
+  }));
+
+  r.on("GET", "/api/approvals", () => ({ status: 200, body: listApprovals(db) }));
+
+  r.on("POST", "/api/approvals/:id", (_req, { id }, body) => guarded(() => {
+    const b = (body ?? {}) as Record<string, unknown>;
+    if (b.decision !== "approve" && b.decision !== "reject") throw new HttpError(400, "invalid_decision");
+    if (!Number.isSafeInteger(b.draft_version)) throw new HttpError(400, "missing_draft_version");
+    if (!Number.isSafeInteger(b.rules_version)) throw new HttpError(400, "missing_rules_version");
+    const res = decide(db, store, id, {
+      decision: b.decision, draftVersion: b.draft_version as number, rulesVersion: b.rules_version as number,
+    });
+    // Send now rather than on the next tick, so the reply lands in the widget
+    // while the owner is still looking.
+    if (res.status === "approved") dispatchOutbox(db, store);
+    return { status: 200, body: res };
+  }));
   r.on("GET", "/api/rules", () => ({
     status: 200,
     body: store.list().map(({ domain, state }) => describe(domain, state)),
