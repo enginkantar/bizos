@@ -35,6 +35,11 @@ test('rules refusal explains that old rules stay active', async t => {
   await assert.rejects(request('rules/company',{content:'bad'},'PUT'),/not saved.*previous version.*Unknown policy key/);
 });
 
+test('refusals carry the server code so the desk can react to rules_changed', async t => {
+  t.mock.method(globalThis,'fetch',async () => Response.json({error:'rules_changed',current_rules_version:2},{status:409}));
+  await assert.rejects(request('approvals/draft',{decision:'approve'}),{code:'rules_changed'});
+});
+
 test('case normalization uses channel recipient and preserves original rule bindings', () => {
   const item=normalizeCase({reply_to:'patient@example.com',messages:[],drafts:[{rule_citations:'["KNOW-HOURS"]',rules_versions:'{"company":3}',rules_version:1,text:'reply',gate_verdict:'pass'}]});
   assert.equal(item.draft.reply_to,'patient@example.com');
