@@ -7,6 +7,7 @@ export interface Config {
   port: number;
   dbPath: string;
   rulesDir: string;
+  starterTemplate: string;
   anthropicApiKey: string | undefined;
   routerModel: string;
   agentModel: string;
@@ -26,6 +27,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // The business's own rules: one <domain>.rules.md per department, copied
     // from a starter pack in templates/ (templates/README.md).
     rulesDir: env.RULES_DIR || "business",
+    // Copied into rulesDir on first start if rulesDir does not exist yet, so a
+    // fresh clone runs the demo business with one command. Empty = never copy.
+    starterTemplate: env.STARTER_TEMPLATE ?? "dental-office",
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
     routerModel: env.ROUTER_MODEL || "claude-haiku-5-5",
     agentModel: env.AGENT_MODEL || "claude-sonnet-5-5",

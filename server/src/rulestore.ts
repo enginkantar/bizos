@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync, renameSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseRulesFile, withVersion, RulesError, type RulesFile } from "./rules.ts";
 
@@ -99,6 +99,21 @@ export class RuleStore {
     this.domains.set(domain, { active: file, mtimeMs: statSync(path).mtimeMs });
     return { file, previous };
   }
+}
+
+// First start of a fresh clone: copy a starter pack from templates/ into the
+// business's own rules folder. Only when that folder does not exist at all -
+// an owner who emptied it on purpose, or edited it, is never overwritten.
+// business/ is gitignored: it is the business's data, like .env, and the
+// owner's edits during the demo must not show up as repo changes.
+export function seedFromTemplate(rulesDir: string, template: string, templatesRoot = "templates"): string[] {
+  if (!template || existsSync(rulesDir)) return [];
+  const from = join(templatesRoot, template);
+  if (!existsSync(from)) return [];
+  mkdirSync(rulesDir, { recursive: true });
+  const copied = readdirSync(from).filter((n) => n.endsWith(SUFFIX));
+  for (const name of copied) copyFileSync(join(from, name), join(rulesDir, name));
+  return copied;
 }
 
 export class ConflictError extends Error {

@@ -20,3 +20,7 @@ coverage/
 .idea/
 Thumbs.db
 .claude/settings.local.json
+
+# The business's own rules: copied from templates/ on first start, then edited
+# by the owner. Business data, like .env - not part of the product.
+business/
