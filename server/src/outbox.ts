@@ -36,9 +36,16 @@ const ADAPTERS: Record<string, Deliver> = {
 
 export function dispatchOutbox(db: DatabaseSync, store: RuleStore): number {
   const t = () => new Date().toISOString();
-  db.prepare(`UPDATE outbox SET state = 'pending', updated_at = ?
-              WHERE state = 'processing' AND updated_at < ?`)
-    .run(t(), new Date(Date.now() - STUCK_MS).toISOString());
+  // Look before writing (issue #23). This runs every second; an unconditional
+  // UPDATE took the write lock every second even with nothing to recover, so
+  // anything else holding the lock - a DB viewer, a sqlite3 shell - made an
+  // idle server fail. Under WAL a read never waits for the writer.
+  const staleBefore = new Date(Date.now() - STUCK_MS).toISOString();
+  if (db.prepare("SELECT 1 FROM outbox WHERE state = 'processing' AND updated_at < ? LIMIT 1").get(staleBefore)) {
+    db.prepare(`UPDATE outbox SET state = 'pending', updated_at = ?
+                WHERE state = 'processing' AND updated_at < ?`)
+      .run(t(), staleBefore);
+  }
 
   const jobs = db.prepare("SELECT * FROM outbox WHERE state = 'pending' ORDER BY created_at LIMIT 20").all() as unknown as Job[];
   let sent = 0;
@@ -76,4 +83,48 @@ export function dispatchOutbox(db: DatabaseSync, store: RuleStore): number {
     }
   }
   return sent;
+}
+
+export interface OutboxLoop {
+  // One pass, as the timer runs it: never throws.
+  tick: () => void;
+  stop: () => void;
+}
+
+// The loop that keeps sending. 🔴 It must never take the server down (issue
+// #23): an uncaught "database is locked" (SQLITE_BUSY) from a timer callback
+// killed the whole process. A failed pass is logged and simply tried again on
+// the next tick - the jobs are in SQLite, so nothing is lost by waiting. One
+// log line when it starts failing and one when it recovers, not one a second.
+//
+// setTimeout, not setInterval, so a slow pass (SQLite busy-waits up to
+// busy_timeout) can never overlap the next one.
+export function startOutboxLoop(
+  db: DatabaseSync,
+  store: RuleStore,
+  { intervalMs = 1000, log = console }: { intervalMs?: number; log?: Pick<Console, "error" | "log"> } = {},
+): OutboxLoop {
+  let failing = false;
+  let timer: NodeJS.Timeout | undefined;
+  let stopped = false;
+
+  const tick = () => {
+    try {
+      dispatchOutbox(db, store);
+      if (failing) { failing = false; log.log("outbox: recovered, sending again"); }
+    } catch (e) {
+      if (!failing) {
+        failing = true;
+        log.error(`outbox: pass failed, retrying every ${intervalMs} ms: ${(e as Error).message}`);
+      }
+    }
+  };
+  const schedule = () => {
+    if (stopped) return;
+    timer = setTimeout(() => { tick(); schedule(); }, intervalMs);
+  };
+
+  tick();
+  schedule();
+  return { tick, stop: () => { stopped = true; clearTimeout(timer); } };
 }
