@@ -9,6 +9,7 @@ import { lineDiff, changesOnly } from "./diff.ts";
 import { createDraft, listApprovals, decide, DraftError, type Route } from "./drafts.ts";
 import { dispatchOutbox } from "./outbox.ts";
 import { serveStatic } from "./static.ts";
+import { runAgents, type AgentModels, type AgentOutcome } from "./agents/pipeline.ts";
 
 // The routes frozen at 11:00 (DAY_PLAN.md), plus POST /api/cases/:id/drafts,
 // the one door every proposed reply comes through. docs/API.md documents each.
@@ -68,8 +69,28 @@ function describe(domain: string, s: DomainState) {
   };
 }
 
-export function createApp(db: DatabaseSync, config: Config, store = new RuleStore(config.rulesDir)): Server {
+export function createApp(
+  db: DatabaseSync, config: Config, store = new RuleStore(config.rulesDir),
+  // Absent (no API key, or AGENTS=off): no model runs, and drafts come only
+  // from POST /api/cases/:id/drafts.
+  agents?: AgentModels,
+): Server {
   const r = new Router();
+
+  // A model call failing - network, rate limit, an outage - must not lose the
+  // message or crash the server: the case stays `new`, the failure is in the
+  // audit log, and POST /api/cases/:id/agent runs it again.
+  const agentRun = async (caseId: string): Promise<AgentOutcome | { kind: "failed"; reason: string }> => {
+    try {
+      return await runAgents(db, store, agents!, caseId);
+    } catch (e) {
+      if (e instanceof DraftError) return { kind: "failed", reason: e.message };
+      const reason = (e as Error).message;
+      audit(db, "agent_failed", caseId, { error: reason });
+      console.error(`agents: case ${caseId} failed: ${reason}`);
+      return { kind: "failed", reason };
+    }
+  };
 
   r.on("GET", "/api/health", () => ({
     status: 200,
@@ -78,7 +99,27 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
 
   r.on("POST", "/api/inbox", (_req, _p, body) => {
     const { caseId, duplicate } = ingestMessage(db, parseInbound(body));
+    // The agents run after the reply: the channel gets its 201 at once, and
+    // the draft appears in the queue when the models finish (the UI polls).
+    if (agents && !duplicate) void agentRun(caseId);
     return { status: duplicate ? 200 : 201, body: { case_id: caseId, duplicate } };
+  });
+
+  // Run the agents on a case now and wait for the outcome: for a case that
+  // arrived while the key was missing or a model call failed.
+  r.on("POST", "/api/cases/:id/agent", async (_req, { id }) => {
+    if (!agents) return { status: 503, body: { error: "agents_off" } };
+    const out = await agentRun(id);
+    const draft = "draft" in out ? out.draft : null;
+    return {
+      status: out.kind === "failed" ? 502 : 200,
+      body: {
+        outcome: out.kind,
+        reason: "reason" in out ? out.reason : null,
+        department: out.kind === "drafted" ? out.department : null,
+        draft: draft && { draft_id: draft.draftId, version: draft.version, verdict: draft.verdict, policy_id: draft.policyId, reasons: draft.reasons, status: draft.status },
+      },
+    };
   });
 
   r.on("GET", "/api/cases", () => ({

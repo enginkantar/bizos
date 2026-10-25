@@ -3,6 +3,7 @@ import { openDb } from "./db.ts";
 import { createApp } from "./app.ts";
 import { RuleStore, seedFromTemplate } from "./rulestore.ts";
 import { startOutboxLoop } from "./outbox.ts";
+import { anthropicJsonModel } from "./agents/llm.ts";
 
 const config = loadConfig();
 const db = openDb(config.dbPath);
@@ -11,7 +12,13 @@ if (seeded.length) {
   console.log(`first start: copied the ${config.starterTemplate} starter pack into ${config.rulesDir}/ (${seeded.join(", ")})`);
 }
 const store = new RuleStore(config.rulesDir);
-const server = createApp(db, config, store);
+// Haiku routes, Sonnet drafts (design v1.2). Without a key, or with
+// AGENTS=off, the server runs exactly as before and drafts come only from
+// POST /api/cases/:id/drafts.
+const agents = config.anthropicApiKey && config.agentsEnabled
+  ? { json: anthropicJsonModel(config.anthropicApiKey), routerModel: config.routerModel, agentModel: config.agentModel }
+  : undefined;
+const server = createApp(db, config, store, agents);
 
 // Say at startup what the gate will enforce - and what it cannot load - so a
 // broken or missing rules file is visible before the first message, not after.
@@ -41,6 +48,9 @@ server.listen(config.port, config.host, () => {
     // quickstart is still "npm start", and this line says what is missing.
     console.warn("ANTHROPIC_API_KEY is not set - copy .env.example to .env and add your key");
   }
+  console.log(agents
+    ? `agents: on (router ${config.routerModel}, drafter ${config.agentModel})`
+    : `agents: off${config.anthropicApiKey ? " (AGENTS=off)" : ""} - drafts come only from POST /api/cases/:id/drafts`);
 });
 
 // Close the database on Ctrl+C so the WAL is checkpointed into the main file
