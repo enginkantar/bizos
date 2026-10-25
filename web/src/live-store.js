@@ -16,7 +16,9 @@ export async function request(path, body, method = 'POST') {
       stale_draft: 'A newer draft exists. Reload and review it before approving.',
       blocked: `The Policy Gate blocked this reply: ${data.policy_id ?? ''}`,
     };
-    throw new Error(messages[data.error] ?? `The server refused this request: ${data.error ?? response.status}`);
+    const error = new Error(messages[data.error] ?? `The server refused this request: ${data.error ?? response.status}`);
+    error.code = data.error;
+    throw error;
   }
   return data;
 }
