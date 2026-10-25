@@ -179,15 +179,18 @@ test("no citation, or an invented one, is held as a rules gap", () => {
   w.done();
 });
 
-test("a clean, cited, in-limit reply on auto_reply is queued at once; reject escalates", () => {
+test("auto-send is off: a clean, cited, in-limit reply on auto_reply waits for the owner; reject escalates", () => {
   const w = world();
   const ok = createDraft(w.db, w.store, { caseId: w.kase("a"), domain: "support", text: "We open at 7.", ruleCitations: ["S-1"], route: "auto_reply" });
-  assert.equal(ok.status, "approved");
-  assert.ok(ok.outboxId);
+  assert.equal(ok.verdict, "pass");
+  assert.equal(ok.status, "held");
+  assert.equal(ok.outboxId, null);
+  assert.match(ok.reasons.join(), /auto-send is off/);
   const held = createDraft(w.db, w.store, { caseId: w.kase("b"), domain: "support", text: "Refunding $150.", ruleCitations: ["S-1"], action: refund(15000) });
   const res = decide(w.db, w.store, held.draftId, { decision: "reject", draftVersion: 1, rulesVersion: 3 });
   assert.equal(res.status, "escalated");
-  assert.equal(count(w.db, "SELECT COUNT(*) n FROM outbox"), 1, "only the auto reply");
+  assert.equal(dispatchOutbox(w.db, w.store), 0);
+  assert.equal(count(w.db, "SELECT COUNT(*) n FROM outbox"), 0, "nothing is queued without an approval");
   w.done();
 });
 

@@ -40,6 +40,11 @@ export interface RulesFile {
   version: number;
   meta: Record<string, unknown>;
   thresholds: Threshold[];
+  // The IDs the prose defines: the ID that starts a rule line, written
+  // "- REFUND-CAP: ..." or "- [S-2] ...". These and the policy: keys are the
+  // only rules a draft can cite; an ID merely mentioned inside a sentence
+  // defines nothing. Repeats are kept, so a duplicate can be refused.
+  ruleIds: string[];
   body: string;
   raw: string;
   warnings: string[];
@@ -61,7 +66,9 @@ const OUTCOMES: Record<string, Outcome> = {
   draft_for_approval: "review",
 };
 
-const ID_PATTERN = /^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*$/;
+const ID = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*";
+const ID_PATTERN = new RegExp(`^${ID}$`);
+const RULE_LINE = new RegExp(`^\\s*[-*+]\\s+(?:\\[(${ID})\\]|(${ID}):)(?=\\s|$)`);
 
 export function splitFrontMatter(raw: string): { header: string; body: string } {
   const text = raw.replace(/^﻿/, "").replace(/\r\n/g, "\n");
@@ -163,7 +170,12 @@ export function parseRulesFile(raw: string, expectedDomain?: string): RulesFile 
     .filter((t) => !body.includes(t.id))
     .map((t) => `${t.id} is enforced by the gate but not mentioned in the prose rules`);
 
-  return { domain: domain as string, version: version as number, meta: m, thresholds, body, raw, warnings };
+  const ruleIds = body.split("\n").flatMap((line) => {
+    const r = RULE_LINE.exec(line);
+    return r ? [r[1] ?? r[2]] : [];
+  });
+
+  return { domain: domain as string, version: version as number, meta: m, thresholds, ruleIds, body, raw, warnings };
 }
 
 // The version bump on save is the server's job, not the editor's: an owner who

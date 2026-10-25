@@ -269,7 +269,7 @@ the demo's labeled **"unsafe suggestion"** fixture. The model proposes; this dec
 |---|---|---|
 | `domain` | yes | which rules file applies |
 | `text` | yes | the reply |
-| `rule_citations` | no | rule IDs the reply relied on. **None, or an ID not in the active rules, holds it for the owner** |
+| `rule_citations` | no | rule IDs the reply relied on. **Only an ID defined exactly once in the rules in force counts** (see below); anything else holds it for the owner |
 | `action` | no | the money the reply commits to. The gate checks `amount_cents` against the `policy:` limits for `type` |
 | `route` | no | the orchestrator's verdict: `auto_reply`, `draft_for_approval` (default) or `human_now` |
 
@@ -290,12 +290,19 @@ How `status` is decided:
 |---|---|
 | the gate says `block` | `blocked`: nothing is queued, whatever the route |
 | `route: human_now` | `escalated` |
-| anything to review, or `route: draft_for_approval` | `held`: in the approval queue |
-| `pass` and `route: auto_reply` | `approved`, queued and sent at once |
+| anything else, **including `pass` with `route: auto_reply`** | `held`: in the approval queue |
+
+**Auto-send is off** (decision 2, Oct 25): no reply reaches a customer without the owner's
+approval, whatever the route. A clean `auto_reply` draft is held with the reason
+`auto-send is off: every reply waits for the owner`, and `outbox_id` is always `null` here.
 
 A reply is also held, never sent, when its **text** mentions a dollar amount above the
-validated `amount_cents` (or any amount when there is no `action`), when it cites no rule,
-or when it cites a rule that isn't in the active rules files.
+validated `amount_cents` (or any amount when there is no `action`), or when its citations
+don't hold up. A citation counts only if the ID is **defined exactly once** in the rules in
+force (the department's file plus `company.rules.md`), as a `policy:` key or as the ID that
+**starts a rule line**: `- REFUND-CAP: …` or `- [S-2] …`. No citation, an unknown ID, an ID
+defined twice, or a word that merely appears in the file (`the`, a heading, an ID mentioned
+inside a sentence) holds the reply; the reason names the ID.
 
 `404 { "error": "case_not_found" }`; `400` for a missing field.
 
@@ -399,5 +406,9 @@ policy:
   problem listed. Use `policy: {}` for a department with no limits.
 - A policy ID that the prose never mentions loads, with a warning: the prose is the
   human-readable mirror of the block.
+- **A rule line starts with its ID:** `- REFUND-CAP: …` or `- [S-2] …`. Those IDs and the
+  `policy:` keys are the only things a draft can cite. Define each ID once across a
+  department's file and `company.rules.md`; a duplicate makes every draft citing it wait for
+  the owner.
 - **The gate fails closed:** a department with no rules file goes to review, and a
   malformed amount is blocked.
