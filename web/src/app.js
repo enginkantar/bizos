@@ -27,7 +27,11 @@ const statusPill = {
 };
 const verdictPill = { pass: ['ok', 'PASS'], review: ['hold', 'REVIEW'], block: ['block', 'BLOCK'] };
 const pill = (tone, label, extra = '') => `<span class="pill ${tone} ${extra}">${esc(label)}</span>`;
-const status = (item) => pill(...(statusPill[item.status] ?? ['neutral', String(item.status).toUpperCase()]));
+// A held case whose draft passed the gate waits only for the owner's eye; "GATE HOLD" next to
+// "Gate PASS" reads as a contradiction, so it is reserved for drafts the gate itself held.
+const ownerReview = (item) => item.status === 'held' && item.draft?.gate_verdict === 'pass';
+const statusOf = (item) => (ownerReview(item) ? ['hold', 'OWNER REVIEW'] : statusPill[item.status] ?? ['neutral', String(item.status).toUpperCase()]);
+const status = (item) => pill(...statusOf(item));
 const selected = () => state.cases.find((item) => item.id === selectedId);
 const approvalFor = (id) => state.approvals.find((entry) => entry.case_id === id);
 const versionOf = (domain) => state.domains.find((d) => d.domain === domain)?.version;
@@ -59,8 +63,8 @@ const staleSummary = (draft) => staleRules(draft).map(({ domain, from, to }) => 
 function counts() {
   const values = [state.cases.length, state.cases.filter((c) => c.draft).length,
     state.cases.filter((c) => ['approved', 'sent', 'quote_sent'].includes(c.status)).length,
-    // Every draft the gate refused, so a block still counts after a re-run under new rules.
-    state.cases.reduce((n, c) => n + (c.drafts ?? [c.draft]).filter((d) => d?.gate_verdict === 'block').length, 0)];
+    // Cases blocked right now, matching the Blocked tab, so a re-run that clears a block lowers it.
+    state.cases.filter((c) => c.status === 'blocked').length];
   return ['Received', 'Drafted', 'Approved', 'Blocked'].map((label, i) => `<span class="count"><b>${values[i]}</b>${label}</span>`).join('');
 }
 
@@ -83,14 +87,14 @@ function inFilter(item) {
   return true;
 }
 function queueRows() {
-  // The Gate Hold tab follows the server's approval queue order: urgent escalations first.
+  // The Waiting tab follows the server's approval queue order: urgent escalations first.
   const cases = filter === 'hold' ? state.approvals.map((entry) => state.cases.find((c) => c.id === entry.case_id)).filter(Boolean) : state.cases.filter(inFilter);
   if (!cases.length) return `<p class="empty">${filter === 'all' ? 'No cases yet. Simulate a patient message below.' : 'Nothing here right now.'}</p>`;
   return cases.map((item) => `<button class="row ${item.id === selectedId ? 'active' : ''}" data-case="${esc(item.id)}" aria-pressed="${item.id === selectedId}">
     <strong>${esc(item.customer ?? 'Guest')}</strong><span class="row-pills">${approvalFor(item.id)?.urgent ? pill('block', 'URGENT', 'solid') : ''}${status(item)}<span class="domain">${domainTag(item.domain)}</span></span></button>`).join('');
 }
 function queue() {
-  const tabs = [['all', 'All', state.cases.length], ['hold', 'Gate Hold', state.approvals.length], ['blocked', 'Blocked', null], ['sent', 'Sent', null]];
+  const tabs = [['all', 'All', state.cases.length], ['hold', 'Waiting', state.approvals.length], ['blocked', 'Blocked', null], ['sent', 'Sent', null]];
   return `<aside class="pane queue" aria-label="Case queue"><div class="pane-head"><h2>Cases</h2></div>
     <div class="tabs" role="tablist">${tabs.map(([id, label, n]) => `<button role="tab" aria-selected="${filter === id}" data-filter="${id}">${label}${n == null ? '' : `<span class="badge ${id === 'hold' && n ? 'amber' : ''}">${n}</span>`}</button>`).join('')}</div>
     <div class="rows scroll" id="rows">${queueRows()}</div>
@@ -133,7 +137,7 @@ function gateBox(item) {
   }
   if (approval) {
     const busy = pending.endsWith(`:${draft.id}`);
-    return `<div class="gate hold" id="gate"><div class="gate-head"><strong>🔒 GATE HOLD: Owner approval required</strong>${approval.urgent ? pill('block', 'URGENT', 'solid') : ''}<span class="reason">${esc(reason)}</span><span class="chips">${chips}</span></div>
+    return `<div class="gate hold" id="gate"><div class="gate-head"><strong>🔒 ${draft.gate_verdict === 'pass' ? 'OWNER REVIEW: approval required' : 'GATE HOLD: Owner approval required'}</strong>${approval.urgent ? pill('block', 'URGENT', 'solid') : ''}<span class="reason">${esc(reason)}</span><span class="chips">${chips}</span></div>
       ${draft.gate_reason ? `<p class="gate-reason">${esc(draft.gate_reason)}</p>` : ''}${draftSections(item, draft)}
       <div class="actions">${stale && item.status === 'held' ? `<span class="hint">Rules changed: ${esc(staleSummary(draft))}. Judge it under the current rules first.</span>${rerun}`
         : `<span class="hint">Draft v${esc(draft.version)} · approves a reply, never a payment</span>
@@ -161,7 +165,7 @@ function rulesEditor() {
   const options = state.domains.map((d) => `<option value="${esc(d.domain)}" ${d.domain === r.domain ? 'selected' : ''}>${esc(d.domain)}.rules.md · v${esc(d.version)}</option>`).join('');
   return `<main class="pane stage editor" aria-labelledby="editor-title"><header class="case-head"><div><h1 id="editor-title">Rules editor</h1><p>Plain Markdown. Saving bumps the version; the gate uses it on its very next check.</p></div>
       <button class="btn ghost" id="close-rules">Back to case</button></header>${noticeStrip()}
-    <form id="rules-form" class="scroll"><label class="file-select">File <select id="rules-domain" ${store.mode === 'demo' ? 'disabled' : ''}>${options}</select></label>
+    <form id="rules-form" class="scroll"><label class="file-select">File <select id="rules-domain">${options}</select></label>
       <textarea id="rules-text" spellcheck="false" aria-label="Rules file text">${esc(editorText)}</textarea><p id="rules-error" class="form-error" role="alert"></p>
       <div class="editor-actions"><button class="btn approve" type="submit">Save rules</button><button class="btn ghost" type="button" id="reload-rules">Reload active</button>
       ${store.mode === 'demo' ? '<span class="hint">Fixture editor: change the amounts or hours only.</span>' : ''}</div>
@@ -225,10 +229,8 @@ function render({ keepView = false } = {}) {
 }
 function notify(message, error = false) { notice = message; noticeError = error; render({ keepView: true }); }
 async function openRules(domain, citationId) {
-  if (store.mode === 'live') {
-    if (citationId) await store.selectCitation(citationId);
-    else if (domain) await store.selectDomain(domain);
-  }
+  if (citationId) await store.selectCitation(citationId);
+  else if (domain) await store.selectDomain(domain);
   state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
   rulesOpen = true;
   if (!noticeError) notice = '';
@@ -268,13 +270,15 @@ document.addEventListener('click', async (event) => {
       let item;
       await busy('inject', async () => { item = await store.inject(button.dataset.inject); });
       selectedId = item.id; rulesOpen = false;
-      notify(`${item.customer ?? 'Guest'}: message received and judged. ${statusPill[item.status]?.[1] ?? item.status}.`);
+      notify(`${item.customer ?? 'Guest'}: message received and judged. ${statusOf(item)[1]}.`);
     } else if (button.dataset.rerun) {
       const before = selected()?.draft;
       await busy(`rerun:${button.dataset.rerun}`, () => store.recheck(button.dataset.rerun));
       state = store.snapshot();
       const after = state.cases.find((c) => c.id === button.dataset.rerun)?.draft;
       notify(`Same request, judged again: ${before?.gate_verdict?.toUpperCase()} → ${after?.gate_verdict?.toUpperCase()} under the current rules. Nothing sent.`);
+      // The re-run button sits at the bottom of the old box; start the new verdict at its header.
+      document.querySelector('.gate')?.scrollTo({ top: 0 });
     } else if (button.dataset.review) {
       const item = state.cases.find((entry) => entry.id === button.dataset.id);
       const decision = button.dataset.review;
@@ -300,6 +304,15 @@ document.addEventListener('change', async (event) => {
   try { await store.selectDomain(event.target.value); state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version; render(); }
   catch (e) { notify(e.message, true); }
 });
+// The diff sits under the tall textarea, below the fold on a stage screen; scroll the form so
+// the whole diff shows, its heading first if it does not fit.
+function showDiff() {
+  const form = document.querySelector('#rules-form');
+  const diff = form?.querySelector('.diff');
+  if (!diff) return;
+  const top = form.scrollTop + diff.getBoundingClientRect().top - form.getBoundingClientRect().top - 12;
+  form.scrollTop = Math.min(top, top + diff.offsetHeight + 24 - form.clientHeight);
+}
 document.addEventListener('submit', async (event) => {
   if (event.target.id !== 'rules-form') return;
   event.preventDefault();
@@ -308,6 +321,7 @@ document.addEventListener('submit', async (event) => {
     await store.saveRules(editorText, editorVersion);
     state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
     notify(from === editorVersion ? 'No change to save.' : `Saved ${state.rules.domain ?? 'company'}.rules.md v${from} → v${editorVersion}. Open the case and re-run the same request.`);
+    showDiff();
   } catch (e) { document.querySelector('#rules-error').textContent = e.message; }
 });
 

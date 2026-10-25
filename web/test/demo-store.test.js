@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDemoStore, compileRules, evaluateRefund, INITIAL_RULES } from '../src/demo-store.js';
+import { createDemoStore, compileRules, evaluateRefund, FIXTURE_RULES, INITIAL_RULES } from '../src/demo-store.js';
 
 const capText = (cents) => INITIAL_RULES.replace('max_amount_cents: 20000', `max_amount_cents: ${cents}`);
 const heldCase = (store) => store.snapshot().cases.find((item) => item.status === 'held' && item.intent === 'refund');
@@ -17,7 +17,7 @@ test('starts with reproducible fixture cases, decisions, and audit times', () =>
 });
 
 test('uses strict whole-cent thresholds, including their exact boundaries', () => {
-  const rules = compileRules(INITIAL_RULES);
+  const rules = compileRules();
   assert.equal(evaluateRefund(12000, rules), 'pass');
   assert.equal(evaluateRefund(12001, rules), 'review');
   assert.equal(evaluateRefund(20000, rules), 'review');
@@ -28,11 +28,11 @@ test('uses strict whole-cent thresholds, including their exact boundaries', () =
 test('live rule edit changes the next refund verdict and its generated answer', () => {
   const store = createDemoStore();
   assert.equal(store.inject('refund').status, 'blocked');
-  store.saveRules(capText(25000), 3);
+  store.saveRules(capText(25000), 4);
   const next = store.inject('refund');
   assert.equal(next.status, 'held');
   assert.equal(next.draft.cap, 25000);
-  assert.equal(next.draft.rules_version, 4);
+  assert.deepEqual(next.draft.rules_versions, { company: 5, billing: 3 });
   assert.match(next.draft.text, /\$250/);
   assert.equal(store.inject('unsafe').status, 'blocked');
   assert.ok(store.snapshot().rules.diff.some((line) => line.op === 'add' && line.text.includes('25000')));
@@ -40,7 +40,7 @@ test('live rule edit changes the next refund verdict and its generated answer', 
 
 test('editing the hours rule changes the next support reply', () => {
   const store = createDemoStore();
-  store.saveRules(INITIAL_RULES.replace('Monday-Thursday 7:30 am-5 pm, Friday 7:30 am-1 pm. Closed weekends.', 'Tuesday-Saturday, 10am-6pm.'), 3);
+  store.saveRules(INITIAL_RULES.replace('Monday-Thursday 7:30 am-5 pm, Friday 7:30 am-1 pm. Closed weekends.', 'Tuesday-Saturday, 10am-6pm.'), 4);
   assert.match(store.inject('hours').draft.text, /Tuesday-Saturday, 10am-6pm/);
 });
 
@@ -52,43 +52,43 @@ test('invalid rule saves leave active limits, version, cases, and audit intact',
     capText(10000), capText(20000.5), capText(-1),
     INITIAL_RULES.replace('above: block', 'above: pass'),
     INITIAL_RULES.replace('applies_to: refund', 'applies_to: store_credit'),
-    INITIAL_RULES.replace('- [KNOW-HOURS]', '- REMOVED:'),
+    INITIAL_RULES.replace('- KNOW-HOURS:', '- REMOVED:'),
     INITIAL_RULES.replace('policy:', 'other:'),
     `${INITIAL_RULES}\n- HOURS: A duplicate.`,
     'not a rules file',
   ];
   for (const text of invalid) {
-    assert.throws(() => store.saveRules(text, 3));
+    assert.throws(() => store.saveRules(text, 4));
     assert.deepEqual(store.snapshot(), before);
   }
 });
 
 test('no-op save does not bump the version and stale editor cannot overwrite a save', () => {
   const store = createDemoStore();
-  assert.equal(store.saveRules(INITIAL_RULES, 3).rules.version, 3);
-  store.saveRules(capText(25000), 3);
-  assert.throws(() => store.saveRules(INITIAL_RULES, 3), /rules changed/i);
+  assert.equal(store.saveRules(INITIAL_RULES, 4).rules.version, 4);
+  store.saveRules(capText(25000), 4);
+  assert.throws(() => store.saveRules(INITIAL_RULES, 4), /rules changed/i);
   assert.equal(store.snapshot().rules.compiled.cap, 25000);
 });
 
 test('old drafts keep original verdict and cap; rechecking creates a new binding', () => {
   const store = createDemoStore();
   const before = store.inject('refund');
-  store.saveRules(capText(25000), 3);
+  store.saveRules(capText(25000), 4);
   const unchanged = store.snapshot().cases.find((item) => item.id === before.id);
   assert.deepEqual(unchanged.draft, before.draft);
   store.recheck(before.id);
   const updated = store.snapshot().cases.find((item) => item.id === before.id);
   assert.equal(updated.status, 'held');
   assert.equal(updated.draft.version, 2);
-  assert.equal(updated.draft.rules_version, 4);
+  assert.deepEqual(updated.draft.rules_versions, { company: 5, billing: 3 });
   assert.throws(() => store.review(before.id, 'approve', before.draft), /draft changed/i);
 });
 
 test('rule changes invalidate approval and recheck can block an existing draft', () => {
   const store = createDemoStore();
   const item = heldCase(store);
-  store.saveRules(capText(14000), 3);
+  store.saveRules(capText(14000), 4);
   assert.throws(() => store.review(item.id, 'approve', item.draft), /Rules changed/);
   store.recheck(item.id);
   assert.equal(store.snapshot().cases.find((entry) => entry.id === item.id).status, 'blocked');
@@ -144,11 +144,38 @@ test('snapshot cannot mutate store state and reset restores the original run', (
   external.rules.compiled.cap = 1;
   external.cases[0].draft.text = 'changed';
   assert.deepEqual(store.snapshot(), initial);
-  store.saveRules(capText(25000), 3);
+  store.saveRules(capText(25000), 4);
   store.inject('sales');
   assert.deepEqual(store.reset(), initial);
   const empty = store.reset(true);
   assert.equal(empty.cases.length, 0);
   assert.equal(empty.audit.length, 0);
   assert.equal(store.inject('hours').status, 'held');
+});
+
+test('fixtures match the dental pack: the cap in company v4, the approval limit in billing v3', () => {
+  const { domains, ruleIndex } = createDemoStore().snapshot();
+  const file = (domain) => domains.find((d) => d.domain === domain);
+  assert.equal(file('company').version, 4);
+  assert.equal(file('billing').version, 3);
+  assert.deepEqual(file('company').policy.find((p) => p.id === 'REFUND-CAP'), { id: 'REFUND-CAP', limit_cents: 20000, outcome: 'block' });
+  assert.deepEqual(file('billing').policy.find((p) => p.id === 'REFUND-APPROVAL'), { id: 'REFUND-APPROVAL', limit_cents: 12000, outcome: 'review' });
+  assert.ok(!file('company').policy.some((p) => p.id === 'REFUND-APPROVAL'));
+  assert.equal(ruleIndex['REFUND-APPROVAL'].domain, 'billing');
+  assert.equal(ruleIndex['KNOW-HOURS'].domain, 'company');
+});
+
+test('a billing edit moves the approval limit and stales billing drafts, not the company version', () => {
+  const store = createDemoStore();
+  const item = heldCase(store);
+  store.selectCitation('REFUND-APPROVAL');
+  assert.equal(store.snapshot().rules.domain, 'billing');
+  store.saveRules(FIXTURE_RULES.billing.replace('over_cents: 12000', 'over_cents: 16000'), 3);
+  const after = store.snapshot();
+  assert.equal(after.domains.find((d) => d.domain === 'company').version, 4);
+  assert.equal(after.rules.compiled.reviewLimit, 16000);
+  assert.throws(() => store.review(item.id, 'approve', item.draft), /Rules changed/);
+  store.recheck(item.id);
+  assert.equal(store.snapshot().cases.find((entry) => entry.id === item.id).draft.gate_verdict, 'pass');
+  assert.throws(() => store.saveRules(FIXTURE_RULES.billing.replace('over_cents: 12000', 'over_cents: 30000'), 4), /below the cap/);
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEnvelope, mergeMessages } from '../src/widget.js';
+import { buildEnvelope, demoExchange, mergeMessages } from '../src/widget.js';
 
 test('the widget sends the webform envelope, name only when given', () => {
   assert.deepEqual(buildEnvelope({ messageId: 'm1', name: ' Dana ', email: ' dana@example.com ', text: ' Hours? ' }), {
@@ -25,4 +25,14 @@ test('messages from every remembered case merge by received_at and keep no case 
   const merged = mergeMessages([a, undefined, b, a]);
   assert.deepEqual(merged.map((m) => m.text), ['first', 'second', 'reply']);
   assert.doesNotMatch(JSON.stringify(merged), /secret draft|held|dana@example\.com/);
+});
+
+test('offline demo Send echoes the message and a reply that is labeled demo and claims nothing was sent', () => {
+  const [mine, reply] = demoExchange('Hours?', 0);
+  assert.deepEqual(mine, { id: 'demo-0-in', direction: 'in', text: 'Hours?' });
+  assert.equal(reply.direction, 'out');
+  assert.equal(reply.demo, true);
+  assert.match(reply.text, /offline demo/);
+  assert.match(reply.text, /did not reach the clinic/);
+  assert.notEqual(demoExchange('x', 2)[0].id, mine.id);
 });

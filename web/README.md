@@ -7,7 +7,14 @@ project path. Serve it over HTTP, rather than opening a `file:` URL.
 `npm start` serves this desk at `/` beside the API (live mode). From the repository
 root, `npm run web` serves it alone at http://127.0.0.1:5173/ with synthetic dental
 fixtures, using Python's standard-library static server. Refresh resets demo data;
-the top bar says "Demo data · server offline" in that mode.
+the top bar says "Demo data · server offline" in that mode. The fixtures are trimmed
+copies of the dental pack at the versions a fresh install seeds (company v4 with
+REFUND-CAP $200, billing v3 with REFUND-APPROVAL $120, front-desk v2), and the fixture
+editor opens any of the three files.
+
+`/widget.html` probes `/api/health` on load. With no server it says "Demo data" in a
+persistent note, and Send echoes the message with a reply labeled as an offline demo
+that says nothing reached the clinic.
 
 The first `/api/rules` request selects live mode if the API responds. A failed
 initial request loads the fixtures. Later live failures keep the last live data and
@@ -19,8 +26,10 @@ show a notice; they never silently switch to fixtures.
   the rules pill for the file behind the case on screen (`RULES company · v4`, from
   the API, flashes when any file's version moves), the live heartbeat, and a link to
   the stage view `/demo.html`.
-- **Cases:** filter tabs All / Gate Hold / Blocked / Sent. Gate Hold is the server's
+- **Cases:** filter tabs All / Waiting / Blocked / Sent. Waiting is the server's
   approval queue (`GET /api/approvals`): escalations first, with a rose URGENT pill.
+  A held case whose draft passed the gate reads OWNER REVIEW; one the gate held
+  (money over an approval threshold) reads GATE HOLD.
   Each row shows only the customer, the status pill and the department.
 - **Case:** the message thread, and a pinned gate box. Held drafts get the amber
   gate box with Approve & Send (approves the shown draft and rules versions) and
