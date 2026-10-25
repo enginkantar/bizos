@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; frame-src 'self'; img-src 'self' data:; base-uri 'none'" />
+    <title>BizOS | Live demo</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23315cd5'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/demo.css" />
+  </head>
+  <body>
+    <header class="stage-head">
+      <strong>BizOS live demo</strong>
+      <span>Left: the owner's desk. Right: what the patient sees. Same server, same rules.</span>
+    </header>
+    <main class="stage">
+      <section class="pane pane-desk" aria-label="Owner desk">
+        <h2>Owner desk</h2>
+        <iframe src="./" title="Owner desk"></iframe>
+      </section>
+      <section class="pane pane-widget" aria-label="Customer widget">
+        <h2>Customer widget</h2>
+        <iframe src="./widget.html?name=Dana&amp;email=dana@example.com" title="Customer widget"></iframe>
+      </section>
+    </main>
+  </body>
+</html>
