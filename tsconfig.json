@@ -1,0 +1,20 @@
+{
+  // Type-checking only. Node 24 runs the .ts files directly by stripping types,
+  // so there is no build output and nothing to keep in sync with it. That only
+  // works for syntax Node can erase - enums, namespaces and parameter
+  // properties need a compiler, so erasableSyntaxOnly refuses them here before
+  // `npm start` does at runtime.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["server/**/*.ts"]
+}
