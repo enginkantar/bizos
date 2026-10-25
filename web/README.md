@@ -19,8 +19,10 @@ show a notice; they never silently switch to fixtures.
   the rules pill for the file behind the case on screen (`RULES company · v4`, from
   the API, flashes when any file's version moves), the live heartbeat, and a link to
   the stage view `/demo.html`.
-- **Cases:** filter tabs All / Gate Hold / Blocked / Sent. Gate Hold is the server's
+- **Cases:** filter tabs All / Waiting / Blocked / Sent. Waiting is the server's
   approval queue (`GET /api/approvals`): escalations first, with a rose URGENT pill.
+  A held case whose draft passed the gate reads OWNER REVIEW; one the gate held
+  (money over an approval threshold) reads GATE HOLD.
   Each row shows only the customer, the status pill and the department.
 - **Case:** the message thread, and a pinned gate box. Held drafts get the amber
   gate box with Approve & Send (approves the shown draft and rules versions) and

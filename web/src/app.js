@@ -27,7 +27,11 @@ const statusPill = {
 };
 const verdictPill = { pass: ['ok', 'PASS'], review: ['hold', 'REVIEW'], block: ['block', 'BLOCK'] };
 const pill = (tone, label, extra = '') => `<span class="pill ${tone} ${extra}">${esc(label)}</span>`;
-const status = (item) => pill(...(statusPill[item.status] ?? ['neutral', String(item.status).toUpperCase()]));
+// A held case whose draft passed the gate waits only for the owner's eye; "GATE HOLD" next to
+// "Gate PASS" reads as a contradiction, so it is reserved for drafts the gate itself held.
+const ownerReview = (item) => item.status === 'held' && item.draft?.gate_verdict === 'pass';
+const statusOf = (item) => (ownerReview(item) ? ['hold', 'OWNER REVIEW'] : statusPill[item.status] ?? ['neutral', String(item.status).toUpperCase()]);
+const status = (item) => pill(...statusOf(item));
 const selected = () => state.cases.find((item) => item.id === selectedId);
 const approvalFor = (id) => state.approvals.find((entry) => entry.case_id === id);
 const versionOf = (domain) => state.domains.find((d) => d.domain === domain)?.version;
@@ -83,14 +87,14 @@ function inFilter(item) {
   return true;
 }
 function queueRows() {
-  // The Gate Hold tab follows the server's approval queue order: urgent escalations first.
+  // The Waiting tab follows the server's approval queue order: urgent escalations first.
   const cases = filter === 'hold' ? state.approvals.map((entry) => state.cases.find((c) => c.id === entry.case_id)).filter(Boolean) : state.cases.filter(inFilter);
   if (!cases.length) return `<p class="empty">${filter === 'all' ? 'No cases yet. Simulate a patient message below.' : 'Nothing here right now.'}</p>`;
   return cases.map((item) => `<button class="row ${item.id === selectedId ? 'active' : ''}" data-case="${esc(item.id)}" aria-pressed="${item.id === selectedId}">
     <strong>${esc(item.customer ?? 'Guest')}</strong><span class="row-pills">${approvalFor(item.id)?.urgent ? pill('block', 'URGENT', 'solid') : ''}${status(item)}<span class="domain">${domainTag(item.domain)}</span></span></button>`).join('');
 }
 function queue() {
-  const tabs = [['all', 'All', state.cases.length], ['hold', 'Gate Hold', state.approvals.length], ['blocked', 'Blocked', null], ['sent', 'Sent', null]];
+  const tabs = [['all', 'All', state.cases.length], ['hold', 'Waiting', state.approvals.length], ['blocked', 'Blocked', null], ['sent', 'Sent', null]];
   return `<aside class="pane queue" aria-label="Case queue"><div class="pane-head"><h2>Cases</h2></div>
     <div class="tabs" role="tablist">${tabs.map(([id, label, n]) => `<button role="tab" aria-selected="${filter === id}" data-filter="${id}">${label}${n == null ? '' : `<span class="badge ${id === 'hold' && n ? 'amber' : ''}">${n}</span>`}</button>`).join('')}</div>
     <div class="rows scroll" id="rows">${queueRows()}</div>
@@ -133,7 +137,7 @@ function gateBox(item) {
   }
   if (approval) {
     const busy = pending.endsWith(`:${draft.id}`);
-    return `<div class="gate hold" id="gate"><div class="gate-head"><strong>🔒 GATE HOLD: Owner approval required</strong>${approval.urgent ? pill('block', 'URGENT', 'solid') : ''}<span class="reason">${esc(reason)}</span><span class="chips">${chips}</span></div>
+    return `<div class="gate hold" id="gate"><div class="gate-head"><strong>🔒 ${draft.gate_verdict === 'pass' ? 'OWNER REVIEW: approval required' : 'GATE HOLD: Owner approval required'}</strong>${approval.urgent ? pill('block', 'URGENT', 'solid') : ''}<span class="reason">${esc(reason)}</span><span class="chips">${chips}</span></div>
       ${draft.gate_reason ? `<p class="gate-reason">${esc(draft.gate_reason)}</p>` : ''}${draftSections(item, draft)}
       <div class="actions">${stale && item.status === 'held' ? `<span class="hint">Rules changed: ${esc(staleSummary(draft))}. Judge it under the current rules first.</span>${rerun}`
         : `<span class="hint">Draft v${esc(draft.version)} · approves a reply, never a payment</span>
@@ -268,7 +272,7 @@ document.addEventListener('click', async (event) => {
       let item;
       await busy('inject', async () => { item = await store.inject(button.dataset.inject); });
       selectedId = item.id; rulesOpen = false;
-      notify(`${item.customer ?? 'Guest'}: message received and judged. ${statusPill[item.status]?.[1] ?? item.status}.`);
+      notify(`${item.customer ?? 'Guest'}: message received and judged. ${statusOf(item)[1]}.`);
     } else if (button.dataset.rerun) {
       const before = selected()?.draft;
       await busy(`rerun:${button.dataset.rerun}`, () => store.recheck(button.dataset.rerun));
