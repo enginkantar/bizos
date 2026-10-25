@@ -5,17 +5,16 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "workspaces": ["web"],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env server/src/index.ts",
     "dev": "node --env-file-if-exists=.env --watch server/src/index.ts",
-    "web": "npm start --workspace web",
-    "build": "tsc --noEmit && npm run build --workspace web",
-    "test": "node --test \"server/test/*.test.ts\" && npm test --workspace web",
-    "lint": "npm run lint --workspace web"
+    "web": "python3 -m http.server 5173 --bind 127.0.0.1 --directory web",
+    "build": "tsc --noEmit",
+    "test": "node --test \"server/test/*.test.ts\" \"web/test/*.test.js\"",
+    "lint": "node --check web/src/app.js && node --check web/src/demo-store.js && node --check web/src/live-store.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

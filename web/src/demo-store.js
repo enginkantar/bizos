@@ -1,5 +1,3 @@
-import { parseDocument } from 'yaml';
-
 export const INITIAL_RULES = `---
 domain: company
 version: 3
@@ -8,8 +6,8 @@ policy:
   REFUND-APPROVAL: { over_cents: 12000, action: draft_for_approval, applies_to: refund }
 ---
 # The front desk handbook
-- HOURS: Monday-Friday, 9am-5pm.
-- SALES-FOLLOWUP: Ask for the event date, guest count, and a good time to talk.
+- [KNOW-HOURS] Monday-Thursday 7:30 am-5 pm, Friday 7:30 am-1 pm. Closed weekends.
+- [NEW-1] Arrive 15 minutes early with your insurance card and photo ID.
 - REFUND-CAP: Refund requests above the policy cap go to the owner. Never promise payment.
 - REFUND-APPROVAL: Replies above the review limit need the owner's approval.
 `;
@@ -18,56 +16,19 @@ export const money = (cents) => new Intl.NumberFormat('en-US', {
   style: 'currency', currency: 'USD', maximumFractionDigits: cents % 100 ? 2 : 0,
 }).format(cents / 100);
 
-function rulesDocument(text) {
-  if (text.length > 12000) throw new Error('Keep this demo rules file under 12,000 characters.');
-  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-  if (!match) throw new Error('Keep the YAML policy between the two --- lines.');
-  const doc = parseDocument(match[1], { uniqueKeys: true });
-  if (doc.errors.length) throw new Error(`Check the policy format: ${doc.errors[0].message.split('\n')[0]}`);
-  return { doc, prose: match[2] };
-}
-
+// Deliberately narrow fixture editor, never used for live policy decisions.
 export function compileRules(text) {
-  const { doc, prose } = rulesDocument(text);
-  const data = doc.toJS({ maxAliasCount: 0 });
-  if (!data || data.domain !== 'company' || !Number.isSafeInteger(data.version)) {
-    throw new Error('Use domain: company and a whole-number version. The demo manages version bumps.');
-  }
-  if (Object.keys(data).some((key) => !['domain', 'version', 'policy'].includes(key))) {
-    throw new Error('This demo supports only domain, version, and policy in the YAML header.');
-  }
-  const policy = data.policy;
-  if (!policy || Object.keys(policy).sort().join(',') !== 'REFUND-APPROVAL,REFUND-CAP') {
-    throw new Error('Keep both REFUND-CAP and REFUND-APPROVAL in policy.');
-  }
-  for (const [id, rule] of Object.entries(policy)) {
-    const cap = id === 'REFUND-CAP';
-    const keys = cap ? ['max_amount_cents', 'above', 'applies_to'] : ['over_cents', 'action', 'applies_to'];
-    if (!rule || Object.keys(rule).sort().join(',') !== keys.sort().join(',')) {
-      throw new Error(`${id}: keep exactly ${keys.join(', ')}. Amounts are whole cents.`);
-    }
-    const amount = rule[cap ? 'max_amount_cents' : 'over_cents'];
-    if (!Number.isSafeInteger(amount) || amount < 0 || amount > 100000000) {
-      throw new Error(`${id}: use whole cents from 0 to 100000000.`);
-    }
-    if (rule.applies_to !== 'refund' || rule[cap ? 'above' : 'action'] !== (cap ? 'block' : 'draft_for_approval')) {
-      throw new Error(`${id}: keep its refund scope and ${cap ? 'block' : 'draft_for_approval'} action.`);
-    }
-  }
-  const cap = policy['REFUND-CAP'].max_amount_cents;
-  const reviewLimit = policy['REFUND-APPROVAL'].over_cents;
-  if (reviewLimit > cap) throw new Error('The approval limit must be at or below the refund cap.');
-  const proseRules = [...prose.matchAll(/^- ([A-Z][A-Z-]+): (.+)$/gm)];
-  const citations = proseRules.map((match) => match[1]);
-  if (new Set(citations).size !== citations.length) throw new Error('Each rule ID must appear only once in the handbook.');
-  for (const id of ['HOURS', 'SALES-FOLLOWUP', 'REFUND-CAP', 'REFUND-APPROVAL']) {
-    if (!citations.includes(id)) throw new Error(`Keep a handbook line starting with - ${id}: followed by its guidance.`);
-  }
-  return {
-    cap, reviewLimit, citations,
-    hours: proseRules.find((match) => match[1] === 'HOURS')[2],
-    sales: proseRules.find((match) => match[1] === 'SALES-FOLLOWUP')[2],
-  };
+  const shape = value => value.replace(/^version: \d+$/m, 'version: N').replace(/(max_amount_cents: |over_cents: )\d+/g, '$1N').replace(/^- \[KNOW-HOURS\] .+$/m, '- [KNOW-HOURS] TEXT');
+  if (shape(text) !== shape(INITIAL_RULES)) throw new Error('Demo editor: edit only the displayed amounts or hours. Nothing saved.');
+  if (!/^domain: company$/m.test(text) || !/^version: \d+$/m.test(text)) throw new Error('Demo editor: keep domain: company and the version line.');
+  const cap = text.match(/^  REFUND-CAP: \{ max_amount_cents: (\d+), above: block, applies_to: refund \}$/m);
+  const review = text.match(/^  REFUND-APPROVAL: \{ over_cents: (\d+), action: draft_for_approval, applies_to: refund \}$/m);
+  if (!cap || !review) throw new Error('Demo editor supports only the displayed refund policy format. Use whole cents. Nothing saved.');
+  const capValue = Number(cap[1]), reviewValue = Number(review[1]);
+  if (!Number.isSafeInteger(capValue) || !Number.isSafeInteger(reviewValue) || reviewValue > capValue) throw new Error('Use whole cents and keep the approval limit below the cap.');
+  const hours = text.match(/^- \[KNOW-HOURS\] (.+)$/m)?.[1];
+  if (!hours) throw new Error('Keep the [KNOW-HOURS] rule.');
+  return { cap: capValue, reviewLimit: reviewValue, hours, sales: 'Please arrive 15 minutes early with a photo ID and insurance card.' };
 }
 
 export function evaluateRefund(amount, rules) {
@@ -78,11 +39,11 @@ export function evaluateRefund(amount, rules) {
 }
 
 const fixtures = {
-  hours: { customer: 'Jamie Park', reply_to: 'jamie@example.com', channel: 'webform', domain: 'support', title: 'A quick question about hours', message: 'Hi! When can I stop by this week?', intent: 'hours' },
-  sales: { customer: 'Morgan Lee', reply_to: 'morgan@example.com', channel: 'email', domain: 'sales', title: 'Coffee for the whole team', message: 'We are planning a team breakfast for 40 people. Can you help with coffee and pastries?', intent: 'sales' },
-  refund: { customer: 'Dana Brooks', reply_to: 'dana@example.com', channel: 'email', domain: 'support', title: 'A refund for the cancelled order', message: 'Our event was cancelled. Could you refund $225 for the order?', amount_cents: 22500, intent: 'refund' },
-  unsafe: { customer: 'Alex Rivera', reply_to: 'alex@example.com', channel: 'webform', domain: 'support', title: 'The $500 refund request', message: 'The order arrived too late for our event. Please refund the full $500.', amount_cents: 50000, intent: 'refund', unsafe: true },
-  gap: { customer: 'Sam Taylor', reply_to: 'sam@example.com', channel: 'email', domain: 'support', title: 'An international delivery question', message: 'Can you ship a coffee subscription to Canada?', intent: 'gap' },
+  hours: { customer: 'Jamie Park', reply_to: 'jamie@example.com', channel: 'webform', domain: 'front-desk', title: 'A quick question about hours', message: 'Hi! When can I stop by this week?', intent: 'hours' },
+  sales: { customer: 'Morgan Lee', reply_to: 'morgan@example.com', channel: 'email', domain: 'front-desk', title: 'A first visit to the dentist', message: 'I am a new patient. What should I bring to my first visit?', intent: 'sales' },
+  refund: { customer: 'Dana Brooks', reply_to: 'dana@example.com', channel: 'email', domain: 'billing', title: 'A refund for the cancelled appointment', message: 'Could you review a $225 refund for my cancelled appointment?', amount_cents: 22500, intent: 'refund' },
+  unsafe: { customer: 'Alex Rivera', reply_to: 'alex@example.com', channel: 'webform', domain: 'billing', title: 'The $500 refund request', message: 'Please refund $500 for my cancelled appointment.', amount_cents: 50000, intent: 'refund', unsafe: true },
+  gap: { customer: 'Sam Taylor', reply_to: 'sam@example.com', channel: 'email', domain: 'front-desk', title: 'An insurance coverage question', message: 'Can you guarantee my insurance will cover an implant?', intent: 'gap' },
 };
 
 // This is the replaceable data boundary. It never calls an API, sends a message,
@@ -104,21 +65,21 @@ export function createDemoStore() {
     if (item.intent === 'refund') {
       const verdict = evaluateRefund(item.amount_cents, rules);
       return {
-        ...common, gate_verdict: verdict, cap: rules.cap, reviewLimit: rules.reviewLimit, amount_cents: item.amount_cents, action_type: 'refund',
+        ...common, gate_verdict: verdict, cap: rules.cap, reviewLimit: rules.reviewLimit, amount_cents: item.amount_cents, action_type: 'refund', gate_policy_id: verdict === 'block' ? 'REFUND-CAP' : 'REFUND-APPROVAL', gate_reason: verdict === 'block' ? `Refund exceeds REFUND-CAP (${money(rules.cap)})` : 'auto-send is off: every reply waits for the owner',
         rule_citations: ['REFUND-CAP', 'REFUND-APPROVAL'],
         text: verdict === 'block'
-          ? `I can refund ${money(item.amount_cents)} for your cancelled order.`
+          ? `I can refund ${money(item.amount_cents)} for your cancelled appointment.`
           : `We can review refunds up to ${money(rules.cap)}. Your ${money(item.amount_cents)} request is within that limit. I will ask the owner to review your request; no payment is promised.`,
       };
     }
-    if (item.intent === 'hours') return { ...common, gate_verdict: 'pass', action_type: 'reply', rule_citations: ['HOURS'], text: `You can stop by ${rules.hours} We look forward to seeing you!` };
-    if (item.intent === 'sales') return { ...common, gate_verdict: 'review', action_type: 'reply', rule_citations: ['SALES-FOLLOWUP'], text: `We would love to help with your team breakfast. ${rules.sales}` };
-    return { ...common, gate_verdict: 'review', action_type: 'reply', rule_citations: [], text: 'Thanks for asking. I will check with the owner about international shipping and get back to you.' };
+    if (item.intent === 'hours') return { ...common, gate_verdict: 'pass', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: ['KNOW-HOURS'], text: `You can stop by ${rules.hours} We look forward to seeing you!` };
+    if (item.intent === 'sales') return { ...common, gate_verdict: 'review', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: ['NEW-1'], text: `Welcome to Harbor Smile Dental. ${rules.sales}` };
+    return { ...common, gate_verdict: 'review', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: [], text: 'Thanks for asking. I will check with the owner about insurance coverage and get back to you.' };
   }
   function statusFor(item) {
-    if (item.intent === 'gap') return 'gap';
+    if (item.intent === 'gap') return 'escalated';
     if (item.draft.gate_verdict === 'block') return 'blocked';
-    return item.intent === 'hours' ? 'simulated' : 'held';
+    return 'held';
   }
   function inject(kind, overrides = {}) {
     if (!fixtures[kind]) throw new Error('Choose one of the demo message types.');
@@ -128,8 +89,8 @@ export function createDemoStore() {
     item.status = statusFor(item);
     state.cases.unshift(item);
     audit(item,
-      item.status === 'blocked' ? `${money(item.amount_cents)} action blocked` : item.status === 'simulated' ? 'Auto-reply simulated' : item.status === 'gap' ? 'Rules gap found' : 'Draft held for approval',
-      item.status === 'blocked' ? `REFUND-CAP: ${money(item.draft.cap)}. Escalated to owner. No message sent.` : item.status === 'simulated' ? 'HOURS cited. Simulated reply only.' : item.status === 'gap' ? 'No international shipping rule. Owner response needed.' : `${item.customer} / rules v${item.draft.rules_version}. No message sent.`,
+      item.status === 'blocked' ? `${money(item.amount_cents)} action blocked` : item.status === 'simulated' ? 'Auto-reply simulated' : item.status === 'escalated' ? 'Rules gap found' : 'Draft held for approval',
+      item.status === 'blocked' ? `REFUND-CAP: ${money(item.draft.cap)}. Escalated to owner. No message sent.` : item.status === 'simulated' ? 'HOURS cited. Simulated reply only.' : item.status === 'escalated' ? 'No insurance coverage rule. Owner response needed.' : `${item.customer} / rules v${item.draft.rules_version}. No message sent.`,
       item.status === 'blocked' ? 'block' : item.status === 'simulated' ? 'pass' : 'review');
     return structuredClone(item);
   }
@@ -145,7 +106,7 @@ export function createDemoStore() {
       inject('hours');
       inject('sales');
       inject('gap');
-      inject('refund', { amount_cents: 15000, message: 'Could you refund $150 for our cancelled order?', title: 'A $150 refund to review' });
+      inject('refund', { amount_cents: 15000, message: 'Could you refund $150 for our cancelled appointment?', title: 'A $150 refund to review' });
       inject('unsafe');
     }
     return snapshot();
@@ -157,9 +118,7 @@ export function createDemoStore() {
     if (text === state.rules.text) return snapshot();
     const previous = state.rules;
     const version = previous.version + 1;
-    const { doc, prose } = rulesDocument(text);
-    doc.set('version', version);
-    const nextText = `---\n${doc.toString()}---\n${prose}`;
+    const nextText = text.replace(/^version: \d+$/m, `version: ${version}`);
     const compiled = compileRules(nextText);
     const before = previous.text.trimEnd().split('\n');
     const after = nextText.trimEnd().split('\n');
@@ -188,10 +147,10 @@ export function createDemoStore() {
     }
     if (draft.rules_version !== state.rules.version) throw new Error('Rules changed. Recheck the draft before approving or rejecting.');
     if (item.intent === 'refund' && evaluateRefund(item.amount_cents, state.rules.compiled) === 'block') throw new Error('The current refund cap blocks this reply. Recheck the draft.');
-    item.status = decision === 'approve' ? 'approved' : 'rejected';
+    item.status = decision === 'approve' ? 'approved' : 'escalated';
     audit(item, decision === 'approve' ? 'Reply approved locally' : 'Reply rejected', decision === 'approve' ? `${item.customer} / draft v${draft.version}. No message sent. No payment made.` : `${item.customer} / escalated to owner. No message sent.`, decision === 'approve' ? 'pass' : 'review');
     return snapshot();
   }
   reset();
-  return { snapshot, inject, saveRules, recheck, review, reset };
+  return { mode: 'demo', snapshot, inject, saveRules, recheck, review, reset };
 }

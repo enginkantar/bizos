@@ -12,7 +12,7 @@ test('starts with reproducible fixture cases, decisions, and audit times', () =>
   assert.equal(first.cases.length, 5);
   assert.equal(first.cases[0].status, 'blocked');
   assert.equal(first.cases[0].draft.cap, 20000);
-  assert.equal(first.cases.filter((item) => item.status === 'held').length, 2);
+  assert.equal(first.cases.filter((item) => item.status === 'held').length, 3);
   assert.ok(first.audit[0].detail.includes('No message sent.'));
 });
 
@@ -40,7 +40,7 @@ test('live rule edit changes the next refund verdict and its generated answer', 
 
 test('editing the hours rule changes the next support reply', () => {
   const store = createDemoStore();
-  store.saveRules(INITIAL_RULES.replace('Monday-Friday, 9am-5pm.', 'Tuesday-Saturday, 10am-6pm.'), 3);
+  store.saveRules(INITIAL_RULES.replace('Monday-Thursday 7:30 am-5 pm, Friday 7:30 am-1 pm. Closed weekends.', 'Tuesday-Saturday, 10am-6pm.'), 3);
   assert.match(store.inject('hours').draft.text, /Tuesday-Saturday, 10am-6pm/);
 });
 
@@ -52,7 +52,7 @@ test('invalid rule saves leave active limits, version, cases, and audit intact',
     capText(10000), capText(20000.5), capText(-1),
     INITIAL_RULES.replace('above: block', 'above: pass'),
     INITIAL_RULES.replace('applies_to: refund', 'applies_to: store_credit'),
-    INITIAL_RULES.replace('- HOURS:', '- REMOVED:'),
+    INITIAL_RULES.replace('- [KNOW-HOURS]', '- REMOVED:'),
     INITIAL_RULES.replace('policy:', 'other:'),
     `${INITIAL_RULES}\n- HOURS: A duplicate.`,
     'not a rules file',
@@ -121,13 +121,13 @@ test('reject escalates without sending and removes the case from approvals', () 
   const item = heldCase(store);
   store.review(item.id, 'reject', item.draft);
   const after = store.snapshot();
-  assert.equal(after.cases.find((entry) => entry.id === item.id).status, 'rejected');
+  assert.equal(after.cases.find((entry) => entry.id === item.id).status, 'escalated');
   assert.match(after.audit[0].detail, /escalated to owner. No message sent./);
 });
 
 test('gap and blocked cases cannot be approved', () => {
   const store = createDemoStore();
-  for (const item of store.snapshot().cases.filter((entry) => ['blocked', 'gap'].includes(entry.status))) {
+  for (const item of store.snapshot().cases.filter((entry) => ['blocked', 'escalated'].includes(entry.status))) {
     assert.throws(() => store.review(item.id, 'approve', item.draft));
   }
 });
@@ -145,5 +145,5 @@ test('snapshot cannot mutate store state and reset restores the original run', (
   const empty = store.reset(true);
   assert.equal(empty.cases.length, 0);
   assert.equal(empty.audit.length, 0);
-  assert.equal(store.inject('hours').status, 'simulated');
+  assert.equal(store.inject('hours').status, 'held');
 });
