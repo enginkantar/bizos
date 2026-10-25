@@ -1,0 +1,11 @@
+# The team works on Windows, macOS and Linux. Normalize line endings in the repo
+# so a Windows checkout cannot turn every file into a whole-file diff, and so the
+# claim proofs and shell scripts keep LF endings - bash reads a CRLF script as
+# commands ending in a stray carriage return and fails with confusing errors.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.jpg binary
+*.ico binary
