@@ -9,256 +9,326 @@ let selectedId = state.cases[0]?.id;
 let rulesOpen = false;
 let editorText = state.rules.text;
 let editorVersion = state.rules.version;
-let query = '';
 let filter = 'all';
+let sideTab = 'rules';
 let notice = connectionError;
 let noticeError = Boolean(connectionError);
-let approvalIndex = 0;
-let auditIndex = 0;
+let pending = '';
+let flashUntil = 0;
+let seenVersions = versionKey();
 
-const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-const time = (at) => (at ?? '').slice(11, 19);
-const domainLabel = (domain) => ({ 'front-desk': 'Front desk', billing: 'Billing', company: 'Company' })[domain] ?? domain;
-const channelLabel = (channel) => ({ webform: 'Web chat', email: 'Email' })[channel] ?? channel;
-const initials = (name) => escape(String(name ?? 'Guest').split(' ').map(word => word[0] ?? '').join(''));
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+const time = (at) => (at ?? '').slice(11, 16);
+const shortId = (id) => String(id ?? '').slice(0, 8);
+const domainTag = (domain) => esc(String(domain ?? 'unrouted').toUpperCase());
+const statusPill = {
+  held: ['hold', 'GATE HOLD'], blocked: ['block', 'BLOCKED'], escalated: ['block', 'ESCALATED'], sent: ['ok', 'SENT'], quote_sent: ['ok', 'QUOTE SENT'],
+  approved: ['ok', 'APPROVED'], new: ['neutral', 'NEW'], routed: ['neutral', 'ROUTED'], drafted: ['neutral', 'DRAFTED'],
+};
+const verdictPill = { pass: ['ok', 'PASS'], review: ['hold', 'REVIEW'], block: ['block', 'BLOCK'] };
+const pill = (tone, label, extra = '') => `<span class="pill ${tone} ${extra}">${esc(label)}</span>`;
+const status = (item) => pill(...(statusPill[item.status] ?? ['neutral', String(item.status).toUpperCase()]));
 const selected = () => state.cases.find((item) => item.id === selectedId);
-// Live mode takes the queue from GET /api/approvals: held and escalated cases, urgent first.
-function approvalCases() {
-  if (store.mode === 'demo') return state.cases.filter((item) => item.status === 'held').toReversed();
-  return (state.approvals ?? []).map((entry) => {
-    const item = state.cases.find((c) => c.id === entry.case_id);
-    return item && { ...item, urgent: entry.urgent };
-  }).filter(Boolean);
+const approvalFor = (id) => state.approvals.find((entry) => entry.case_id === id);
+const versionOf = (domain) => state.domains.find((d) => d.domain === domain)?.version;
+function versionKey() { return state.domains.map((d) => `${d.domain}:${d.version}`).join(','); }
+
+// The file that defines a rule ID among the rules in force. Policy keys are searched first
+// because the gate compiles limits from them; prose IDs come from the loaded rule text.
+function fileFor(id) {
+  return state.domains.find((d) => d.policy?.some((p) => p.id === id))?.domain ?? state.ruleIndex[id]?.domain;
 }
-const awaitingApproval = (item) => approvalCases().some((entry) => entry.id === item.id);
-const selectedDraft = (id) => state.cases.find((item) => item.id === id)?.draft ?? {};
-const statuses = {
-  blocked: ['block', 'Blocked'], held: ['review', 'Needs approval'], simulated: ['pass', 'Reply simulated'],
-  new: ['neutral', 'new'], routed: ['neutral', 'routed'], drafted: ['neutral', 'drafted'], sent: ['pass', 'sent'], quote_sent: ['pass', 'quote_sent'], escalated: ['review', 'escalated'], approved: ['pass', 'approved'], rejected: ['neutral', 'Rejected'], gap: ['review', 'Rules gap'],
-};
-const icon = (name) => {
-  const paths = {
-    inbox: '<path d="M4 4h16v16H4zM4 13h5l2 3h2l2-3h5"/>',
-    rule: '<path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h4"/>',
-    check: '<path d="m5 12 4 4L19 6"/>',
-    shield: '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM12 8v5M12 16h.01"/>',
-    arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
-    close: '<path d="m6 6 12 12M6 18 18 6"/>',
-    reset: '<path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/>',
-    search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
-    spark: '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/>',
-  };
-  return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
-};
-function chip(tone, label) { return `<span class="chip ${tone}">${escape(label)}</span>`; }
-function citations(draft) {
-  return draft.rule_citations.length ? draft.rule_citations.map((id) => `<button class="citation" data-citation="${escape(id)}" title="Find ${escape(id)} in the active rules">${icon('rule')}${escape(id)}</button>`).join('') : '<span class="muted">No matching rule</span>';
+// The rules file behind the decision on screen: the policy that judged the selected draft,
+// else the file that holds the refund cap. Never a hardcoded file name or version.
+function fileInPlay() {
+  const draft = selected()?.draft;
+  const id = draft?.gate_policy_id ?? draft?.rule_citations?.[0];
+  return (id && fileFor(id)) ?? fileFor('REFUND-CAP') ?? state.domains[0]?.domain;
 }
-function stats() {
-  const values = [state.cases.length, state.cases.filter(c => c.draft).length,
-    store.mode === 'live' ? state.cases.filter(c => ['approved', 'sent', 'quote_sent'].includes(c.status)).length : state.cases.filter(c => c.status === 'approved').length,
-    state.cases.filter(c => c.status === 'blocked').length,
-    state.cases.filter(c => c.draft && !c.draft.rule_citations.length).length];
-  return ['Received', 'Drafted', 'Approved', 'Blocked', 'Rules gaps'].map((label, i) => `<div class="stat"><strong>${values[i]}</strong><span>${label}</span></div>`).join('');
+function citation(id, draft) {
+  const domain = fileFor(id);
+  const version = draft?.rules_versions?.[domain] ?? versionOf(domain);
+  return `<button class="cite" data-citation="${esc(id)}" title="Open ${esc(id)} in the rules">§ ${esc(id)}${domain ? ` · ${esc(domain)} v${esc(version)}` : ''}</button>`;
 }
-// Names the files that moved since the draft's check. A company edit leaves the department's
-// rules_version (and the 409's current_rules_version) unchanged, so state.rules is not enough.
+// Files whose version moved since the draft was checked. A company edit leaves the
+// department's rules_version unchanged, so every file in rules_versions is compared.
 function staleRules(draft) {
-  if (store.mode === 'demo') return draft.rules_version === state.rules.version ? [] : [{ domain: 'company', from: draft.rules_version, to: state.rules.version }];
-  return Object.entries(draft.rules_versions ?? {}).map(([domain, from]) => ({ domain, from, to: state.domains.find(r => r.domain === domain)?.version })).filter(change => change.to !== change.from);
+  return Object.entries(draft?.rules_versions ?? {}).map(([domain, from]) => ({ domain, from, to: versionOf(domain) })).filter((change) => change.to !== change.from);
 }
-const staleDraft = (draft) => staleRules(draft).length > 0;
-const staleSummary = (draft) => staleRules(draft).map(({ domain, from, to }) => `${domain}.rules.md v${from} → ${to == null ? 'removed' : `v${to}`}`).join(', ');
-function decisionBadges(item) {
-  const d = item.draft;
-  return `<div class="decision-badges">${item.urgent ? chip('block', 'URGENT') : ''}${d ? chip(d.gate_verdict, `Gate: ${{pass:'PASS',review:'REVIEW',block:'BLOCK'}[d.gate_verdict]}`) : ''}${chip(statuses[item.status]?.[0] ?? 'neutral', `Status: ${item.status}`)}${d?.amount_cents == null ? '' : `<strong class="action-amount">${money(d.amount_cents)} ${escape(d.action_type ?? '')}</strong>`}</div>`;
+const staleSummary = (draft) => staleRules(draft).map(({ domain, from, to }) => `${domain} v${from} → ${to == null ? 'removed' : `v${to}`}`).join(', ');
+function counts() {
+  const values = [state.cases.length, state.cases.filter((c) => c.draft).length,
+    state.cases.filter((c) => ['approved', 'sent', 'quote_sent'].includes(c.status)).length,
+    // Every draft the gate refused, so a block still counts after a re-run under new rules.
+    state.cases.reduce((n, c) => n + (c.drafts ?? [c.draft]).filter((d) => d?.gate_verdict === 'block').length, 0)];
+  return ['Received', 'Drafted', 'Approved', 'Blocked'].map((label, i) => `<span class="count"><b>${values[i]}</b>${label}</span>`).join('');
 }
-function caseRows() {
-  const cases = state.cases.filter((item) => (filter === 'all' || (filter === 'gap' ? item.draft && !item.draft.rule_citations.length : filter === 'held' ? awaitingApproval(item) : item.status === filter)) && `${escape(item.customer ?? 'Guest')} ${escape(item.title)} ${escape(domainLabel(item.domain) ?? 'Unrouted')}`.toLowerCase().includes(query.toLowerCase()));
-  return cases.length ? cases.map((item) => `<button class="case-row ${item.id === selectedId ? 'selected' : ''}" data-case="${item.id}" aria-pressed="${item.id === selectedId}">
-    <span class="case-person"><span class="avatar ${escape((item.domain ?? 'unrouted').toLowerCase())}">${initials(item.customer)}</span><span><strong>${escape(item.customer ?? 'Guest')}</strong><small>${escape(channelLabel(item.channel))} <span aria-hidden="true">·</span> ${escape(domainLabel(item.domain) ?? 'Unrouted')}</small></span><span class="case-dot ${statuses[item.status][0]}" aria-label="${statuses[item.status][1]}"></span></span>
-    <span class="case-subject">${escape(item.title)}</span><span class="case-bottom">${chip(...statuses[item.status])}<small>v${item.draft?.rules_version ?? '-'}</small></span>
-  </button>`).join('') : '<div class="empty"><strong>No matching cases</strong><p>Try a different search or add a message from the demo controls.</p></div>';
+
+function topBar() {
+  const file = fileInPlay();
+  const flash = Date.now() < flashUntil ? 'flash' : '';
+  const live = store.mode === 'live';
+  const down = live && noticeError && notice.startsWith('Live connection interrupted');
+  return `<header class="topbar"><div class="brand"><strong>BizOS</strong><span class="pack">Dental Office Demo</span>${live ? '' : '<span class="pack demo">Demo data · server offline</span>'}</div>
+    <div class="counts" aria-label="Case counts">${counts()}</div>
+    <div class="top-actions">${file ? `<button class="rules-pill ${flash}" data-open-rules="${esc(file)}" title="Rules in force for the case on screen. Click to edit.">RULES ${esc(file)} · v${esc(versionOf(file))}</button>` : ''}
+    <span class="heartbeat ${down ? 'down' : live ? '' : 'demo'}" role="status"><span class="dot"></span>${down ? 'Reconnecting' : live ? 'Live API' : 'Fixtures'}</span>
+    <a class="stage-link" href="./demo.html">Stage view</a></div></header>`;
 }
-function inbox() {
-  return `<aside class="panel inbox" aria-labelledby="inbox-heading"><div class="panel-heading"><h2 id="inbox-heading">Cases <span class="count">${state.cases.length}</span></h2>${icon('inbox')}</div>
-    <label class="search">${icon('search')}<input id="case-search" type="search" placeholder="Find a case" aria-label="Search cases" value="${escape(query)}"></label>
-    <label class="filter-label">Show <select id="case-filter"><option value="all" ${filter === 'all' ? 'selected' : ''}>All cases</option><option value="held" ${filter === 'held' ? 'selected' : ''}>Needs approval</option><option value="blocked" ${filter === 'blocked' ? 'selected' : ''}>Blocked</option><option value="gap" ${filter === 'gap' ? 'selected' : ''}>Rules gaps</option></select></label>
-    <div id="case-rows" class="case-rows">${caseRows()}</div><div class="inbox-note">${icon('spark')}<p>Your front desk, in one place.<br><span>${store.mode === 'demo' ? 'Synthetic patient fixtures.' : 'Connected to BizOS.'}</span></p></div>
-  </aside>`;
+
+function inFilter(item) {
+  if (filter === 'hold') return Boolean(approvalFor(item.id));
+  if (filter === 'blocked') return item.status === 'blocked';
+  if (filter === 'sent') return ['sent', 'quote_sent', 'approved'].includes(item.status);
+  return true;
 }
-function verdictBanner(item) {
+function queueRows() {
+  // The Gate Hold tab follows the server's approval queue order: urgent escalations first.
+  const cases = filter === 'hold' ? state.approvals.map((entry) => state.cases.find((c) => c.id === entry.case_id)).filter(Boolean) : state.cases.filter(inFilter);
+  if (!cases.length) return `<p class="empty">${filter === 'all' ? 'No cases yet. Simulate a patient message below.' : 'Nothing here right now.'}</p>`;
+  return cases.map((item) => `<button class="row ${item.id === selectedId ? 'active' : ''}" data-case="${esc(item.id)}" aria-pressed="${item.id === selectedId}">
+    <strong>${esc(item.customer ?? 'Guest')}</strong><span class="row-pills">${approvalFor(item.id)?.urgent ? pill('block', 'URGENT', 'solid') : ''}${status(item)}<span class="domain">${domainTag(item.domain)}</span></span></button>`).join('');
+}
+function queue() {
+  const tabs = [['all', 'All', state.cases.length], ['hold', 'Gate Hold', state.approvals.length], ['blocked', 'Blocked', null], ['sent', 'Sent', null]];
+  return `<aside class="pane queue" aria-label="Case queue"><div class="pane-head"><h2>Cases</h2></div>
+    <div class="tabs" role="tablist">${tabs.map(([id, label, n]) => `<button role="tab" aria-selected="${filter === id}" data-filter="${id}">${label}${n == null ? '' : `<span class="badge ${id === 'hold' && n ? 'amber' : ''}">${n}</span>`}</button>`).join('')}</div>
+    <div class="rows scroll" id="rows">${queueRows()}</div>
+    <div class="simulate"><span class="label">Simulate a patient message</span><div class="sim-buttons">
+      <button class="sim" data-inject="sales">New patient</button><button class="sim warn" data-inject="unsafe">$500 refund</button>
+      <button class="sim" data-inject="hours">Hours</button><button class="sim" data-inject="gap">Coverage</button></div>
+      ${store.mode === 'demo' ? '<div class="sim-reset"><button class="link" id="empty-demo">Start empty</button><button class="link" id="reset-demo">Reset demo</button></div>' : ''}
+      <small>${store.mode === 'demo' ? 'Fixture simulation in this page. Nothing is sent.' : 'Posts a synthetic message and a scripted draft to the real gate. No model call.'}</small></div></aside>`;
+}
+
+function thread(item) {
+  const messages = item.messages?.length ? item.messages : [{ direction: 'in', text: item.message, received_at: item.at }];
+  return messages.map((m) => `<div class="msg ${m.direction === 'out' ? 'out' : 'in'}"><div class="bubble">${esc(m.text)}</div><small>${m.direction === 'out' ? 'Clinic' : esc(item.customer ?? 'Patient')} · ${esc(time(m.received_at ?? m.sent_at ?? m.created_at))}</small></div>`).join('');
+}
+function blockBanner(draft) {
+  const file = fileFor(draft.gate_policy_id);
+  const version = draft.rules_versions?.[file] ?? draft.rules_version;
+  const parts = [`BLOCKED: ${draft.gate_policy_id ?? 'POLICY'}`, draft.amount_cents == null ? '' : `Requested: ${money(draft.amount_cents)}`,
+    draft.cap == null ? '' : `Maximum permitted: ${money(draft.cap)}`, `Rules version: v${version}`].filter(Boolean);
+  return `<div class="block-banner" role="status"><strong>${parts.map(esc).join(' · ')}</strong><span>${esc(draft.gate_reason)}. Nothing was sent; the owner takes it from here.</span></div>`;
+}
+function draftSections(item, draft) {
+  const evidence = draft.evidence ?? [];
+  const missing = draft.missing_info ?? [];
+  return `<div class="draft-text"><span class="to">To: ${esc(item.reply_to ?? draft.reply_to)}</span>${esc(draft.text)}</div>
+    <div class="info-grid">${evidence.length ? `<section><h4>Supporting information</h4><ul>${evidence.map((e) => `<li>${citation(e.rule_id, draft)}<q>${esc(e.quote)}</q></li>`).join('')}</ul></section>` : ''}
+    ${missing.length ? `<section><h4>Required information</h4><ul class="missing">${missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul></section>` : ''}</div>`;
+}
+function gateBox(item) {
   const draft = item.draft;
+  if (!draft) return `<div class="gate quiet"><strong>Waiting for a draft</strong><span>An agent is working on this message.</span></div>`;
+  const approval = approvalFor(item.id);
+  const stale = staleRules(draft).length > 0;
+  const chips = draft.rule_citations.length ? draft.rule_citations.map((id) => citation(id, draft)).join('') : pill('hold', 'NO RULE CITED');
+  const reason = draft.amount_cents == null ? 'Reply review' : `${draft.action_type ?? 'money'} · ${money(draft.amount_cents)}`;
+  const rerun = `<button class="btn rerun" data-rerun="${esc(item.id)}" ${pending ? 'disabled' : ''}>${pending === `rerun:${item.id}` ? 'Re-running…' : 'Re-run same request'}</button>`;
   if (draft.gate_verdict === 'block') {
-    const cap = draft.cap;
-    const id = draft.gate_policy_id ?? 'REFUND-CAP';
-    return `<div class="gate-banner block" role="status"><div class="gate-title">${icon('shield')}<strong>Blocked by ${escape(id)}${cap == null ? '' : `: ${money(cap)}`}</strong></div><div class="gate-amounts"><span><small>Attempted action</small><b>${money(draft.amount_cents ?? 0)}</b></span>${cap == null ? '' : `<span class="amount-divider">&gt;</span><span><small>Rule cap at check</small><b>${money(cap)}</b></span>`}</div><p>${escape(draft.gate_reason)}. Nothing sent; owner review required.</p></div>`;
+    return `<div class="gate blocked">${blockBanner(draft)}<div class="gate-head"><strong>Blocked suggestion · draft v${esc(draft.version)}</strong><span class="chips">${chips}</span></div>${draftSections(item, draft)}
+      <div class="actions"><span class="hint">${stale ? `Rules changed since this check: ${esc(staleSummary(draft))}.` : 'Edit the rule, then judge this exact request again.'}</span>${rerun}</div></div>`;
   }
-  if (item.status === 'escalated' && !draft.rule_citations.length) return `<div class="gate-banner review"><strong>Your rules don't cover this yet</strong><p>A person must review this request.</p></div>`;
-  return '';
+  if (approval) {
+    const busy = pending.endsWith(`:${draft.id}`);
+    return `<div class="gate hold" id="gate"><div class="gate-head"><strong>🔒 GATE HOLD: Owner approval required</strong>${approval.urgent ? pill('block', 'URGENT', 'solid') : ''}<span class="reason">${esc(reason)}</span><span class="chips">${chips}</span></div>
+      ${draft.gate_reason ? `<p class="gate-reason">${esc(draft.gate_reason)}</p>` : ''}${draftSections(item, draft)}
+      <div class="actions">${stale && item.status === 'held' ? `<span class="hint">Rules changed: ${esc(staleSummary(draft))}. Judge it under the current rules first.</span>${rerun}`
+        : `<span class="hint">Draft v${esc(draft.version)} · approves a reply, never a payment</span>
+        <button class="btn escalate" data-review="reject" data-id="${esc(item.id)}" ${pending ? 'disabled' : ''}>${busy && pending.startsWith('reject') ? 'Escalating…' : item.status === 'escalated' ? 'Handle in person' : 'Escalate'}</button>
+        <button class="btn approve" data-review="approve" data-id="${esc(item.id)}" ${pending ? 'disabled' : ''}>${busy && pending.startsWith('approve') ? 'Approving…' : 'Approve &amp; Send'}</button>`}</div></div>`;
+  }
+  const done = { sent: '✓ Sent to the patient', quote_sent: '✓ Quote sent', approved: '✓ Approved · sending now', escalated: '! Escalated · the owner handles it in person' }[item.status] ?? `Status: ${item.status}`;
+  return `<div class="gate quiet ${['sent', 'quote_sent', 'approved'].includes(item.status) ? 'ok' : 'err'}"><strong>${esc(done)}</strong><span class="hint">Draft v${esc(draft.version)}</span><span class="chips">${chips}</span></div>`;
 }
-function detail() {
+function caseView() {
   const item = selected();
-  if (!item) return `<main class="panel case-detail empty-detail" id="case-detail"><div class="empty">${icon('inbox')}<h2>A little breathing room.</h2><p>Add a support question, sales lead, or refund from the demo controls to get started.</p></div></main>`;
-  const draft = item.draft;
-  if (!draft) return `<main class="panel case-detail"><header class="detail-heading"><h2>${escape(item.customer)}</h2></header><div class="detail-scroll">${decisionBadges(item)}<p>${escape(item.message)}</p><p>Waiting for a draft.</p></div></main>`;
-  const stale = staleDraft(draft);
-  const gate_verdict = { pass: ['pass', 'PASS'], review: ['review', 'REVIEW'], block: ['block', 'BLOCK'] }[draft.gate_verdict];
-  const queued = awaitingApproval(item);
-  const completed = ['approved', 'sent'].includes(item.status) || (item.status === 'escalated' && !queued);
-  return `<main class="panel case-detail" id="case-detail" aria-labelledby="case-title"><header class="detail-heading"><div><div class="detail-context">${escape(domainLabel(item.domain) ?? 'Unrouted')} / ${escape(channelLabel(item.channel))} / <span>${store.mode === 'demo' ? 'Synthetic patient' : 'Live case'}</span></div><h2 id="case-title">${escape(item.title)}</h2><p>${escape(item.customer)} <span class="muted">&lt;${escape(item.reply_to)}&gt;</span></p></div>${chip('neutral', `Rules v${draft.rules_version}`)}</header>
-    <div class="detail-scroll">${decisionBadges(item)}${verdictBanner(item)}
-      <section class="conversation" aria-label="Customer conversation"><div class="message-label"><span class="avatar ${escape((item.domain ?? 'unrouted').toLowerCase())}">${initials(item.customer)}</span><strong>${escape(item.customer ?? 'Guest')}</strong><time>${time(item.at)}</time></div><div class="message-bubble">${escape(item.message)}</div><small class="fixture-note">${item.unsafe ? 'Unsafe suggestion fixture / deliberately proposes an over-cap refund' : store.mode === 'demo' ? 'Simulated inbound message' : 'Received by the BizOS server'}</small></section>
-      <section class="draft" aria-labelledby="draft-heading"><div class="draft-heading"><h3 id="draft-heading">${icon('spark')}${draft.gate_verdict === 'block' ? 'Blocked suggestion' : `${escape(domainLabel(draft.domain ?? item.domain) ?? 'Unrouted')} draft`}</h3>${chip(...gate_verdict)}</div>${draft.gate_reason ? `<p class="held-reason">${escape(draft.gate_reason)}</p>` : ''}<p class="draft-text">${escape(draft.text)}</p><div class="citations">${citations(draft)}</div><div class="draft-binding"><span>Draft v${draft.version} / rules v${draft.rules_version}</span><span>To: ${escape(draft.reply_to)} / ${escape(channelLabel(draft.channel))}</span></div></section>
-      ${stale && !completed ? `<div class="stale"><strong>Rules changed: ${escape(staleSummary(draft))}</strong><p>This draft still shows its original policy check. Recheck it before a decision.</p><button class="button secondary" data-recheck="${item.id}">Recheck draft</button></div>` : ''}
-      ${draft.gate_verdict === 'block' ? '<div class="owner-next"><strong>The owner takes it from here.</strong><p>Suggested response: “Thanks for letting us know. I have passed your request to the owner for a personal review.”</p></div>' : ''}
-      ${queued && !stale ? `<div class="detail-actions"><span>Ready for your review in the approval queue.</span><button class="button secondary" data-focus-approval="${item.id}">Review reply ${icon('arrow')}</button></div>` : ''}
-      ${completed ? `<div class="completion ${item.status === 'rejected' ? 'review' : 'pass'}">${icon('check')}<span><strong>${statuses[item.status][1]}</strong><br>${store.mode === 'demo' ? 'Local demo decision. No message sent.' : item.status === 'sent' ? 'Reply sent by the server.' : 'Server status shown above. Approval never makes a payment.'}</span></div>` : ''}
-    </div><footer class="detail-footer"><span class="small-dot"></span>${store.mode === 'demo' ? 'Fixture simulation' : 'Live Policy Gate'} <span>Auto-send off</span></footer></main>`;
+  if (!item) return `<main class="pane stage"><p class="empty center">No case selected. Simulate a patient message to begin.</p></main>`;
+  const verdict = item.draft ? pill(...verdictPill[item.draft.gate_verdict]) : '';
+  return `<main class="pane stage" aria-labelledby="case-title"><header class="case-head"><div><h1 id="case-title">${esc(item.customer ?? 'Guest')}</h1>
+      <p><span class="mono">#${esc(shortId(item.id))}</span> · <span class="domain">${domainTag(item.domain)}</span> · ${esc(item.channel)} · ${esc(item.reply_to)}</p></div>
+      <div class="case-badges">${verdict ? `<span class="badge-label">Gate</span>${verdict}` : ''}<span class="badge-label">Status</span>${status(item)}</div></header>
+    ${noticeStrip()}<div class="thread scroll" id="thread">${thread(item)}</div>${gateBox(item)}</main>`;
 }
-function approvalQueue() {
-  const items = approvalCases();
-  approvalIndex = Math.min(approvalIndex, Math.max(0, items.length - 1));
-  const visible = items.slice(approvalIndex, approvalIndex + 1);
-  return `<section class="panel approvals" aria-labelledby="approvals-heading"><div class="panel-heading"><h2 id="approvals-heading">Your approval <span class="count amber">${items.length}</span></h2><span class="muted">Replies only</span></div><div class="approval-items">${items.length ? visible.map((item) => {
-    const d = item.draft;
-    const stale = staleDraft(d);
-    return `<article class="approval-card" id="approval-${item.id}">${decisionBadges(item)}<div class="approval-title"><button data-case="${item.id}" title="Read the full draft for ${escape(item.customer)}">${escape(item.customer)}</button>${d.amount_cents ? chip('neutral', money(d.amount_cents)) : chip('neutral', domainLabel(item.domain))}</div><p>${escape(d.text)}</p>${d.gate_reason ? `<p class="held-reason">${escape(d.gate_reason)}</p>` : ''}<div class="citations">${citations(d)}</div><div class="approval-binding">Draft v${d.version} / rules v${d.rules_version}<br>To: ${escape(d.reply_to)} / ${escape(channelLabel(d.channel))}</div>${stale ? `<button class="button secondary full stale-recheck" data-recheck="${item.id}" title="${escape(staleSummary(d))}">Rules changed. Recheck draft</button>` : `<div class="approval-actions"><button class="button primary" data-review="approve" data-id="${item.id}">${icon('check')}Approve reply</button><button class="button secondary" data-review="reject" data-id="${item.id}">Reject</button></div>`}</article>`;
-  }).join('') : '<div class="empty"><span class="empty-check">✓</span><strong>You’re all caught up.</strong><p>Replies that need your review will appear here.</p></div>'}</div>${items.length ? `<div class="queue-pager"><button class="pager-button" data-approval-page="-1" ${approvalIndex === 0 ? 'disabled' : ''} aria-label="Previous approval">‹</button><span>${approvalIndex + 1} of ${items.length} replies</span><button class="pager-button" data-approval-page="1" ${approvalIndex === items.length - 1 ? 'disabled' : ''} aria-label="Next approval">›</button></div>` : ''}<p class="approval-note">${store.mode === 'demo' ? 'Local approval only. Nothing is sent.' : 'Approves a reply, never a payment.'}</p></section>`;
+function noticeStrip() {
+  return notice ? `<div class="notice ${noticeError ? 'error' : ''}" role="${noticeError ? 'alert' : 'status'}"><span>${esc(notice)}</span><button class="link" id="dismiss-notice" aria-label="Dismiss">✕</button></div>` : '';
 }
-function auditFeed() {
-  auditIndex = Math.min(auditIndex, Math.max(0, state.audit.length - 1));
-  return `<section class="panel audit" aria-labelledby="audit-heading"><div class="panel-heading"><h2 id="audit-heading">Audit feed</h2><span class="clock-label">${store.mode === 'demo' ? 'Demo time' : 'Live events'}</span></div><div class="audit-items">${state.audit.length ? state.audit.slice(auditIndex, auditIndex + 1).map((entry) => `<div class="audit-entry"><span class="audit-marker ${entry.tone}"></span><div><div class="audit-event-top">${entry.case_id ? `<button class="audit-link" data-case="${entry.case_id}">${escape(entry.title)}</button>` : `<strong>${escape(entry.title)}</strong>`}<time>${time(entry.at)}</time></div><p title="${escape(entry.detail)}">${escape(entry.detail)}</p></div></div>`).join('') : '<div class="empty"><strong>A clean slate.</strong><p>New demo decisions will be recorded here.</p></div>'}</div>${state.audit.length ? `<div class="audit-pager"><button class="pager-button" data-audit-page="-1" ${auditIndex === 0 ? 'disabled' : ''}>Newer</button><span>${auditIndex + 1} / ${state.audit.length}</span><button class="pager-button" data-audit-page="1" ${auditIndex === state.audit.length - 1 ? 'disabled' : ''}>Older</button></div>` : ''}</section>`;
-}
-function readout() {
-  if (store.mode === 'demo') return `<strong>Demo limits - fixture simulation</strong><div><span>REFUND-CAP</span><b>${money(state.rules.compiled.cap)}</b></div>`;
-  return `<strong>Server-compiled policy</strong>${state.rules.policy.map(p => `<div><span>${escape(p.id)} (${escape(p.outcome)})</span><b>${money(p.limit_cents)}</b></div>`).join('') || '<p>No limits in this file.</p>'}${[...(state.rules.warnings ?? []), ...(state.rules.error?.errors ?? [])].map(w => `<p class="form-error">${escape(w)}</p>`).join('')}`;
-}
+
 function rulesEditor() {
-  return `<aside class="panel rules-panel" aria-labelledby="rules-heading"><div class="panel-heading"><h2 id="rules-heading">Your rules ${chip('blue', `v${state.rules.version}`)}</h2><button class="icon-button" id="close-rules" aria-label="Close rules editor">${icon('close')}</button></div><p class="rules-intro">One file shapes the demo’s answers and policy checks. Amounts are in cents.</p><form id="rules-form"><label for="rules-text">${store.mode === 'live' ? `<select id="rules-domain" aria-label="Rules domain">${state.domains.map(r => `<option value="${escape(r.domain)}" ${r.domain === state.rules.domain ? 'selected' : ''}>${escape(r.domain)}.rules.md</option>`).join('')}</select>` : 'company.rules.md'}</label><textarea id="rules-text" spellcheck="false" aria-describedby="rules-help rules-error">${escape(editorText)}</textarea><p id="rules-help">Try changing 20000 to 25000, then save and add a $225 request.</p><p id="rules-error" class="form-error" role="alert"></p><div class="rules-buttons"><button class="button primary" type="submit">Save rules</button><button class="button secondary" type="button" id="reload-rules">Reload active</button></div></form><div id="compiled-limits" class="compiled-limits">${readout()}</div>${state.rules.diff.length ? `<div class="rule-diff"><h3>Saved change / v${state.rules.version - 1} → v${state.rules.version}</h3>${state.rules.diff.map((line) => `<${line.op === 'del' ? 'del' : 'ins'}>${escape(line.text)}</${line.op === 'del' ? 'del' : 'ins'}>`).join('')}</div>` : ''}<p class="rules-boundary">${store.mode === 'demo' ? 'Narrow fixture editor. No server policy is changed.' : 'Limits come only from the API compiled policy. Existing drafts keep their original versions.'}</p></aside>`;
+  const r = state.rules;
+  const options = state.domains.map((d) => `<option value="${esc(d.domain)}" ${d.domain === r.domain ? 'selected' : ''}>${esc(d.domain)}.rules.md · v${esc(d.version)}</option>`).join('');
+  return `<main class="pane stage editor" aria-labelledby="editor-title"><header class="case-head"><div><h1 id="editor-title">Rules editor</h1><p>Plain Markdown. Saving bumps the version; the gate uses it on its very next check.</p></div>
+      <button class="btn ghost" id="close-rules">Back to case</button></header>${noticeStrip()}
+    <form id="rules-form" class="scroll"><label class="file-select">File <select id="rules-domain" ${store.mode === 'demo' ? 'disabled' : ''}>${options}</select></label>
+      <textarea id="rules-text" spellcheck="false" aria-label="Rules file text">${esc(editorText)}</textarea><p id="rules-error" class="form-error" role="alert"></p>
+      <div class="editor-actions"><button class="btn approve" type="submit">Save rules</button><button class="btn ghost" type="button" id="reload-rules">Reload active</button>
+      ${store.mode === 'demo' ? '<span class="hint">Fixture editor: change the amounts or hours only.</span>' : ''}</div>
+      ${r.diff.length ? `<div class="diff"><h4>Saved · ${esc(r.domain)} v${esc(r.version - 1)} → v${esc(r.version)}</h4>${r.diff.map((line) => `<${line.op === 'del' ? 'del' : 'ins'}><b aria-hidden="true">${line.op === 'del' ? '−' : '+'}</b>${esc(line.text)}</${line.op === 'del' ? 'del' : 'ins'}>`).join('')}</div>` : ''}</form></main>`;
 }
+
+function inspector() {
+  const item = selected();
+  const draft = item?.draft;
+  const file = fileInPlay();
+  const limits = state.domains.find((d) => d.domain === file)?.policy ?? [];
+  const checked = draft?.rules_versions?.[file];
+  const body = sideTab === 'activity' ? activity() : `
+    <section class="card"><h3>Rule in force</h3>${file ? `<p class="file mono">${esc(file)}.rules.md · v${esc(versionOf(file))}</p>
+      ${checked != null && checked !== versionOf(file) ? `<p class="hint">This draft was checked under v${esc(checked)}.</p>` : ''}
+      <ul class="limits">${limits.map((p) => `<li><span class="mono">${esc(p.id)}</span><span class="mono">${money(p.limit_cents)}</span>${pill(p.outcome === 'block' ? 'block' : 'hold', p.outcome.toUpperCase())}</li>`).join('') || '<li class="hint">No limits in this file.</li>'}</ul>
+      <button class="btn ghost full" data-open-rules="${esc(file)}">Edit ${esc(file)}.rules.md</button>` : '<p class="hint">No rules loaded.</p>'}</section>
+    ${draft ? `<section class="card"><h3>Citations</h3>${draft.rule_citations.length ? `<ul class="cites">${draft.rule_citations.map((id) => {
+      const quote = draft.evidence?.find((e) => e.rule_id === id)?.quote;
+      return `<li>${citation(id, draft)}<p>${esc(quote ?? state.ruleIndex[id]?.text.replace(/^- /, '') ?? 'Not found in the current rules.')}</p></li>`;
+    }).join('')}</ul>` : '<p class="hint">No rule cited, so a person must review it.</p>'}</section>
+    <section class="card"><h3>Gate result</h3><dl class="gate-result">
+      <dt>Verdict</dt><dd>${pill(...verdictPill[draft.gate_verdict])}</dd>
+      <dt>Policy</dt><dd class="mono">${esc(draft.gate_policy_id ?? '-')}</dd>
+      <dt>Reasons</dt><dd>${esc(draft.gate_reason ?? '-')}</dd>
+      <dt>Rules</dt><dd class="mono">${esc(Object.entries(draft.rules_versions ?? {}).map(([d, v]) => `${d} v${v}`).join(', ') || `v${draft.rules_version}`)}</dd></dl>
+      ${history(item)}</section>` : ''}`;
+  return `<aside class="pane inspector" aria-label="Rules inspector"><div class="tabs" role="tablist"><button role="tab" aria-selected="${sideTab === 'rules'}" data-side="rules">Rules &amp; gate</button><button role="tab" aria-selected="${sideTab === 'activity'}" data-side="activity">Activity<span class="badge">${state.audit.length}</span></button></div>
+    <div class="scroll inspector-body" id="inspector">${body}</div></aside>`;
+}
+// Every draft the gate judged on this case, so the threshold beat shows BLOCK then the new verdict.
+function history(item) {
+  const drafts = item.drafts ?? [];
+  if (drafts.length < 2) return '';
+  return `<h4>Draft history</h4><ol class="history">${drafts.map((d) => {
+    const versions = typeof d.rules_versions === 'string' ? JSON.parse(d.rules_versions) : d.rules_versions ?? {};
+    return `<li><span class="mono">v${esc(d.version)}</span>${pill(...verdictPill[d.gate_verdict])}<span class="mono">${esc(Object.entries(versions).map(([k, v]) => `${k} v${v}`).join(', '))}</span></li>`;
+  }).join('')}</ol>`;
+}
+function activity() {
+  if (!state.audit.length) return '<p class="empty">No activity yet.</p>';
+  const who = (id) => state.cases.find((c) => c.id === id)?.customer;
+  return `<ol class="feed">${state.audit.map((entry) => `<li class="${esc(entry.tone)}"><div><strong>${entry.case_id ? `<button class="link" data-case="${esc(entry.case_id)}">${esc(entry.title)}</button>` : esc(entry.title)}</strong><time>${esc(time(entry.at))}</time></div><p>${who(entry.case_id) ? `${esc(who(entry.case_id))} · ` : ''}${esc(entry.detail)}</p></li>`).join('')}</ol>`;
+}
+
 let renderedFingerprint = '';
-// Scroll containers the 2-second poll would otherwise reset by replacing #app.
-const scrollRegions = ['.case-rows', '.detail-scroll', '.approval-items', '.audit-items', '#rules-text'];
+// Scroll containers that a re-render would otherwise reset.
+const scrollRegions = ['#rows', '#thread', '#inspector', '#rules-form', '#rules-text', '.gate'];
 function render({ keepView = false } = {}) {
   state = store.snapshot();
   renderedFingerprint = JSON.stringify(state);
-  if (!state.cases.some(c => c.id === selectedId)) selectedId = state.cases[0]?.id;
-  const scrolls = keepView ? scrollRegions.map(selector => document.querySelector(selector)?.scrollTop ?? 0) : [];
+  const versions = versionKey();
+  if (versions !== seenVersions) { flashUntil = Date.now() + 1600; seenVersions = versions; }
+  if (!state.cases.some((c) => c.id === selectedId)) selectedId = state.cases[0]?.id;
+  const scrolls = keepView ? scrollRegions.map((selector) => document.querySelector(selector)?.scrollTop ?? 0) : [];
   const focusId = keepView ? document.activeElement?.id : '';
-  draw();
-  scrolls.forEach((top, i) => { const region = document.querySelector(scrollRegions[i]); if (region) region.scrollTop = top; });
+  document.querySelector('#app').innerHTML = `<div class="shell">${topBar()}<div class="grid">${queue()}${rulesOpen ? rulesEditor() : caseView()}${inspector()}</div></div>`;
+  if (keepView) scrolls.forEach((top, i) => { const region = document.querySelector(scrollRegions[i]); if (region) region.scrollTop = top; });
+  else document.querySelector('#thread')?.scrollTo({ top: 1e6 });
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
 }
-function draw() {
-  document.querySelector('#app').innerHTML = `<div class="app-shell"><header class="app-header"><a class="brand" href="./" aria-label="BizOS owner desk"><span class="brand-mark">b<span></span></span><strong>BizOS</strong><span class="brand-divider"></span><span class="workspace-name">Owner desk</span></a><div class="header-actions"><span class="mode-badge"><span class="small-dot"></span>${store.mode === 'demo' ? 'Demo mode' : 'Live mode'}</span><button class="button secondary rules-toggle" id="toggle-rules" aria-expanded="${rulesOpen}">${icon('rule')}${rulesOpen ? 'Show cases' : 'Edit rules'}<span class="version-pill">v${state.rules.version}</span></button><span class="owner-avatar" title="Demo owner">K</span></div></header>
-    <div class="overview"><div class="overview-title"><h1>A front desk that knows your rules.</h1><p>Review the exceptions. See every decision.</p></div><div class="stats" aria-label="Counts for loaded cases">${stats()}</div></div>
-    <div class="demo-disclosure"><span>${icon('inbox')}<strong>${store.mode === 'demo' ? 'Demo data - start the BizOS server for live mode' : 'Live mode - every non-blocked reply waits for approval'}</strong></span><span>${store.mode === 'demo' ? 'Synthetic patients / resets on refresh' : 'Updates every 2 seconds'}</span></div>
-    ${notice ? `<div class="notice ${noticeError ? 'error' : ''}" role="${noticeError ? 'alert' : 'status'}">${escape(notice)}<button class="icon-button" id="dismiss-notice" aria-label="Dismiss notification">${icon('close')}</button></div>` : ''}
-    <div class="workspace ${rulesOpen ? 'rules-open' : ''}">${rulesOpen ? rulesEditor() : inbox()}${detail()}<aside class="right-rail" aria-label="Approvals and audit activity">${approvalQueue()}${auditFeed()}</aside></div>
-    <footer class="demo-controls"><div class="controls-label">${icon('spark')}<span><strong>Demo controls</strong><small>Deterministic fixture inputs</small></span></div><div class="fixture-buttons"><button class="button fixture" data-inject="hours"><span class="key">1</span>Hours question</button><button class="button fixture" data-inject="sales"><span class="key">2</span>New patient</button><button class="button fixture" data-inject="refund"><span class="key">3</span>$225 request</button><button class="button danger-outline" data-inject="unsafe">${icon('shield')}Unsafe $500</button></div><div class="reset-controls" ${store.mode === 'live' ? 'hidden' : ''}><button class="text-button" id="empty-demo">Start empty</button><button class="button secondary" id="reset-demo">${icon('reset')}Reset demo</button></div></footer><p class="simulation-note">Rev 2 / ${store.mode === 'demo' ? 'Fixture simulation only. Nothing leaves this page.' : 'Demo controls submit synthetic messages and labeled fixture suggestions to the real gate. No model is called.'}</p></div>`;
-}
-function notify(message, error = false) { notice = message; noticeError = error; render(); }
-async function openRules(citation) {
-  if (store.mode === 'live' && citation) {
-    await store.selectCitation(citation);
-    state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
+function notify(message, error = false) { notice = message; noticeError = error; render({ keepView: true }); }
+async function openRules(domain, citationId) {
+  if (store.mode === 'live') {
+    if (citationId) await store.selectCitation(citationId);
+    else if (domain) await store.selectDomain(domain);
   }
+  state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
   rulesOpen = true;
+  if (!noticeError) notice = '';
   render();
-  if (citation) {
-    const textarea = document.querySelector('#rules-text');
-    const policyIndex = editorText.indexOf(`  ${citation}:`);
-    const index = policyIndex >= 0 ? policyIndex : Math.max(editorText.indexOf(`- ${citation}:`), editorText.indexOf(`- [${citation}]`));
-    if (index >= 0) {
-      textarea.focus();
-      textarea.setSelectionRange(index, editorText.indexOf('\n', index) < 0 ? editorText.length : editorText.indexOf('\n', index));
-      textarea.scrollTop = Math.max(0, (editorText.slice(0, index).split('\n').length - 4) * 20);
-    }
+  const textarea = document.querySelector('#rules-text');
+  const index = citationId ? [`- ${citationId}:`, `- [${citationId}]`, `  ${citationId}:`].map((key) => editorText.indexOf(key)).find((i) => i >= 0) : -1;
+  if (index != null && index >= 0) {
+    textarea.focus();
+    const end = editorText.indexOf('\n', index);
+    textarea.setSelectionRange(index, end < 0 ? editorText.length : end);
+    textarea.scrollTop = Math.max(0, (editorText.slice(0, index).split('\n').length - 4) * 20);
   }
 }
 function reset(empty) {
-  state = store.reset(empty);
+  store.reset(empty);
+  state = store.snapshot();
   selectedId = state.cases[0]?.id;
-  editorText = state.rules.text;
-  editorVersion = state.rules.version;
-  query = '';
-  filter = 'all';
-  approvalIndex = 0;
-  auditIndex = 0;
-  rulesOpen = false;
-  notify(empty ? 'Empty workspace ready. Add a fixture to begin.' : 'Demo reset to the original fixtures and $200 cap.');
+  editorText = state.rules.text; editorVersion = state.rules.version;
+  filter = 'all'; rulesOpen = false;
+  notify(empty ? 'Empty workspace ready. Simulate a message to begin.' : 'Demo reset to the original fixtures and the $200 cap.');
 }
+async function busy(key, work) {
+  pending = key; render({ keepView: true });
+  try { await work(); } finally { pending = ''; }
+}
+
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('button');
-  if (!button) return;
+  if (!button || button.disabled) return;
   try {
-    if (button.dataset.approvalPage) { approvalIndex += Number(button.dataset.approvalPage); render(); }
-    else if (button.dataset.auditPage) { auditIndex += Number(button.dataset.auditPage); render(); }
-    else if (button.dataset.case) { selectedId = button.dataset.case; render(); }
-    else if (button.dataset.citation) await openRules(button.dataset.citation);
+    if (button.dataset.case) { selectedId = button.dataset.case; rulesOpen = false; notice = noticeError ? notice : ''; render(); }
+    else if (button.dataset.filter) { filter = button.dataset.filter; render({ keepView: true }); }
+    else if (button.dataset.side) { sideTab = button.dataset.side; render({ keepView: true }); }
+    else if (button.dataset.citation) await openRules(null, button.dataset.citation);
+    else if (button.dataset.openRules) await openRules(button.dataset.openRules);
     else if (button.dataset.inject) {
-      const item = await store.inject(button.dataset.inject);
-      auditIndex = 0;
-      selectedId = item.id;
-      notify(`${escape(item.customer ?? 'Guest')} fixture added. ${statuses[item.status][1]}.`);
-    } else if (button.dataset.recheck) {
-      await store.recheck(button.dataset.recheck);
-      auditIndex = 0;
-      notify('Draft rechecked against the active rules. No message sent.');
+      let item;
+      await busy('inject', async () => { item = await store.inject(button.dataset.inject); });
+      selectedId = item.id; rulesOpen = false;
+      notify(`${item.customer ?? 'Guest'}: message received and judged. ${statusPill[item.status]?.[1] ?? item.status}.`);
+    } else if (button.dataset.rerun) {
+      const before = selected()?.draft;
+      await busy(`rerun:${button.dataset.rerun}`, () => store.recheck(button.dataset.rerun));
+      state = store.snapshot();
+      const after = state.cases.find((c) => c.id === button.dataset.rerun)?.draft;
+      notify(`Same request, judged again: ${before?.gate_verdict?.toUpperCase()} → ${after?.gate_verdict?.toUpperCase()} under the current rules. Nothing sent.`);
     } else if (button.dataset.review) {
       const item = state.cases.find((entry) => entry.id === button.dataset.id);
-      try { await store.review(item.id, button.dataset.review, item.draft); }
+      const decision = button.dataset.review;
+      try { await busy(`${decision}:${item.draft.id}`, () => store.review(item.id, decision, item.draft)); }
       catch (error) {
         if (error.code !== 'rules_changed') throw error;
         // The refusal carries only the department's version, so re-read every file to show which one moved.
-        await store.refresh(); render();
-        throw new Error(`Rules changed since this draft was checked: ${staleSummary(selectedDraft(item.id))}. Recheck the draft before approving.`);
+        await store.refresh(); render({ keepView: true });
+        throw new Error(`Rules changed since this draft was checked: ${staleSummary(state.cases.find((c) => c.id === item.id)?.draft)}. Re-run it first.`);
       }
-      auditIndex = 0;
-      notify(store.mode === 'demo' ? 'Demo decision recorded. Nothing sent.' : 'Server decision recorded.');
-    } else if (button.dataset.focusApproval) {
-      approvalIndex = approvalCases().findIndex((item) => item.id === button.dataset.focusApproval);
-      render();
-      document.querySelector(`#approval-${button.dataset.focusApproval}`).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      document.querySelector(`#approval-${button.dataset.focusApproval} [data-review]`)?.focus({ preventScroll: true });
-    } else if (button.id === 'toggle-rules' || button.id === 'close-rules') { rulesOpen = !rulesOpen; render(); }
-    else if (button.id === 'reload-rules') { if (store.mode === 'live') { await store.refresh(); state = store.snapshot(); } editorText = state.rules.text; editorVersion = state.rules.version; render(); }
+      document.querySelector('#thread')?.classList.add('confirmed');
+      notify(decision === 'approve' ? (store.mode === 'demo' ? 'Approved locally. Demo mode sends nothing.' : 'Approved. The reply is on its way to the patient.') : 'Escalated. The owner handles this case in person.');
+    } else if (button.id === 'close-rules') { rulesOpen = false; render(); }
+    else if (button.id === 'reload-rules') { if (store.mode === 'live') await store.refresh(); state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version; render(); }
     else if (button.id === 'reset-demo') reset(false);
     else if (button.id === 'empty-demo') reset(true);
-    else if (button.id === 'dismiss-notice') { notice = ''; render(); }
+    else if (button.id === 'dismiss-notice') { notice = ''; noticeError = false; render({ keepView: true }); }
   } catch (error) { notify(error.message, true); }
 });
-document.addEventListener('input', event => {
-  if (event.target.id === 'rules-text') editorText = event.target.value;
-  if (event.target.id === 'case-search') { query = event.target.value; document.querySelector('#case-rows').innerHTML = caseRows(); }
+document.addEventListener('input', (event) => { if (event.target.id === 'rules-text') editorText = event.target.value; });
+document.addEventListener('change', async (event) => {
+  if (event.target.id !== 'rules-domain') return;
+  try { await store.selectDomain(event.target.value); state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version; render(); }
+  catch (e) { notify(e.message, true); }
 });
-document.addEventListener('change', async event => {
-  if (event.target.id === 'case-filter') { filter = event.target.value; render(); }
-  if (event.target.id === 'rules-domain') {
-    try { await store.selectDomain(event.target.value); state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version; render(); }
-    catch (e) { notify(e.message, true); }
-  }
-});
-document.addEventListener('submit', async event => {
+document.addEventListener('submit', async (event) => {
   if (event.target.id !== 'rules-form') return;
   event.preventDefault();
   try {
+    const from = editorVersion;
     await store.saveRules(editorText, editorVersion);
     state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
-    notify(`Saved rules v${editorVersion}. Send the next request to use the new version. Held drafts retain their old versions.`);
+    notify(from === editorVersion ? 'No change to save.' : `Saved ${state.rules.domain ?? 'company'}.rules.md v${from} → v${editorVersion}. Open the case and re-run the same request.`);
   } catch (e) { document.querySelector('#rules-error').textContent = e.message; }
 });
+
 render();
-if (store.mode === 'live') setInterval(async () => {
-  if (document.activeElement?.closest('form, .approval-card')) return;
-  try {
-    await store.refresh();
-    const recovered = noticeError && notice.startsWith('Live connection interrupted');
-    if (recovered) { notice = ''; noticeError = false; }
-    if (recovered || JSON.stringify(store.snapshot()) !== renderedFingerprint) render({ keepView: true });
-  } catch (e) {
-    const message = `Live connection interrupted. Showing the last loaded data. ${e.message}`;
-    if (message !== notice) { notice = message; noticeError = true; render({ keepView: true }); }
-  }
-}, 2000);
+if (store.mode === 'live') {
+  // A setTimeout chain, so a slow poll never overlaps the next one.
+  const tick = async () => {
+    if (!document.activeElement?.closest('form') && !pending) {
+      try {
+        await store.refresh();
+        const recovered = noticeError && notice.startsWith('Live connection interrupted');
+        if (recovered) { notice = ''; noticeError = false; }
+        if (recovered || JSON.stringify(store.snapshot()) !== renderedFingerprint) render({ keepView: true });
+        const beat = document.querySelector('.heartbeat');
+        beat?.classList.remove('beat'); void beat?.offsetWidth; beat?.classList.add('beat');
+      } catch (e) {
+        const message = `Live connection interrupted. Showing the last loaded data. ${e.message}`;
+        if (message !== notice) { notice = message; noticeError = true; render({ keepView: true }); }
+      }
+    }
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 2000);
+}

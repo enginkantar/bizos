@@ -8,9 +8,21 @@ policy:
 # The front desk handbook
 - [KNOW-HOURS] Monday-Thursday 7:30 am-5 pm, Friday 7:30 am-1 pm. Closed weekends.
 - [NEW-1] Arrive 15 minutes early with your insurance card and photo ID.
-- REFUND-CAP: Refund requests above the policy cap go to the owner. Never promise payment.
+- [KNOW-NEW-PATIENT] New patient visits take about 90 minutes: exam, cleaning and X-rays.
+- REFUND-CAP: never refund more than $200 in one request. Larger refunds are handled by the billing coordinator.
 - REFUND-APPROVAL: Replies above the review limit need the owner's approval.
 `;
+
+// Maps each rule ID to the file that defines it and its line, the same two shapes the
+// gate accepts as a definition: a policy key or the ID that starts a rule line.
+export function indexRules(domain, content) {
+  const index = {};
+  for (const line of String(content ?? '').split('\n')) {
+    const id = line.match(/^  ([A-Z][A-Z0-9-]*):/)?.[1] ?? line.match(/^- \[([A-Z][A-Z0-9-]*)\]/)?.[1] ?? line.match(/^- ([A-Z][A-Z0-9-]*):/)?.[1];
+    if (id && !index[id]?.text?.startsWith('-')) index[id] = { domain, text: line.trim() };
+  }
+  return index;
+}
 
 export const money = (cents) => new Intl.NumberFormat('en-US', {
   style: 'currency', currency: 'USD', maximumFractionDigits: cents % 100 ? 2 : 0,
@@ -40,9 +52,9 @@ export function evaluateRefund(amount, rules) {
 
 const fixtures = {
   hours: { customer: 'Jamie Park', reply_to: 'jamie@example.com', channel: 'webform', domain: 'front-desk', title: 'A quick question about hours', message: 'Hi! When can I stop by this week?', intent: 'hours' },
-  sales: { customer: 'Morgan Lee', reply_to: 'morgan@example.com', channel: 'email', domain: 'front-desk', title: 'A first visit to the dentist', message: 'I am a new patient. What should I bring to my first visit?', intent: 'sales' },
+  sales: { customer: 'Morgan Lee', reply_to: 'morgan@example.com', channel: 'email', domain: 'front-desk', title: 'A first visit to the dentist', message: 'Are you accepting new patients, do you take Delta Dental, and what should I bring to my first appointment?', intent: 'sales' },
   refund: { customer: 'Dana Brooks', reply_to: 'dana@example.com', channel: 'email', domain: 'billing', title: 'A refund for the cancelled appointment', message: 'Could you review a $225 refund for my cancelled appointment?', amount_cents: 22500, intent: 'refund' },
-  unsafe: { customer: 'Alex Rivera', reply_to: 'alex@example.com', channel: 'webform', domain: 'billing', title: 'The $500 refund request', message: 'Please refund $500 for my cancelled appointment.', amount_cents: 50000, intent: 'refund', unsafe: true },
+  unsafe: { customer: 'Alex Rivera', reply_to: 'alex@example.com', channel: 'webform', domain: 'billing', title: 'The $500 refund request', message: 'You charged me $500. Please refund it.', amount_cents: 50000, intent: 'refund', unsafe: true },
   gap: { customer: 'Sam Taylor', reply_to: 'sam@example.com', channel: 'email', domain: 'front-desk', title: 'An insurance coverage question', message: 'Can you guarantee my insurance will cover an implant?', intent: 'gap' },
 };
 
@@ -61,19 +73,24 @@ export function createDemoStore() {
   }
   function draftFor(item, version = 1) {
     const rules = state.rules.compiled;
-    const common = { version, rules_version: state.rules.version, reply_to: item.reply_to, channel: item.channel };
+    const common = { version, rules_version: state.rules.version, rules_versions: { company: state.rules.version }, reply_to: item.reply_to, channel: item.channel, evidence: [], missing_info: [] };
     if (item.intent === 'refund') {
       const verdict = evaluateRefund(item.amount_cents, rules);
       return {
         ...common, gate_verdict: verdict, cap: rules.cap, reviewLimit: rules.reviewLimit, amount_cents: item.amount_cents, action_type: 'refund', gate_policy_id: verdict === 'block' ? 'REFUND-CAP' : 'REFUND-APPROVAL', gate_reason: verdict === 'block' ? `Refund exceeds REFUND-CAP (${money(rules.cap)})` : 'auto-send is off: every reply waits for the owner',
         rule_citations: ['REFUND-CAP', 'REFUND-APPROVAL'],
+        evidence: [{ rule_id: 'REFUND-CAP', quote: 'Larger refunds are handled by the billing coordinator' }],
+        missing_info: ['the date of the original charge'],
         text: verdict === 'block'
-          ? `I can refund ${money(item.amount_cents)} for your cancelled appointment.`
+          ? `I can refund ${money(item.amount_cents)} to your card today.`
           : `We can review refunds up to ${money(rules.cap)}. Your ${money(item.amount_cents)} request is within that limit. I will ask the owner to review your request; no payment is promised.`,
       };
     }
     if (item.intent === 'hours') return { ...common, gate_verdict: 'pass', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: ['KNOW-HOURS'], text: `You can stop by ${rules.hours} We look forward to seeing you!` };
-    if (item.intent === 'sales') return { ...common, gate_verdict: 'review', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: ['NEW-1'], text: `Welcome to Harbor Smile Dental. ${rules.sales}` };
+    if (item.intent === 'sales') return { ...common, gate_verdict: 'review', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: ['NEW-1', 'KNOW-NEW-PATIENT'],
+      evidence: [{ rule_id: 'NEW-1', quote: 'arrive 15 minutes early' }, { rule_id: 'KNOW-NEW-PATIENT', quote: 'New patient visits take about 90 minutes' }],
+      missing_info: ['which Delta Dental plan they have (PPO or HMO)'],
+      text: `Welcome to Harbor Smile Dental, and yes, we are accepting new patients. Your first visit takes about 90 minutes: exam, cleaning and X-rays. ${rules.sales} Which Delta Dental plan do you have, so we can check it before your visit?` };
     return { ...common, gate_verdict: 'review', action_type: 'reply', gate_reason: 'auto-send is off: every reply waits for the owner', rule_citations: [], text: 'Thanks for asking. I will check with the owner about insurance coverage and get back to you.' };
   }
   function statusFor(item) {
@@ -85,6 +102,7 @@ export function createDemoStore() {
     if (!fixtures[kind]) throw new Error('Choose one of the demo message types.');
     const at = stamp();
     const item = { ...fixtures[kind], ...overrides, id: `case-${sequence}`, at };
+    item.messages = [{ direction: 'in', text: item.message, received_at: at }];
     item.draft = draftFor(item);
     item.status = statusFor(item);
     state.cases.unshift(item);
@@ -111,7 +129,17 @@ export function createDemoStore() {
     }
     return snapshot();
   }
-  function snapshot() { return structuredClone(state); }
+  // The same shape as the live store's snapshot, so the desk renders one way in both modes.
+  function snapshot() {
+    const { cap, reviewLimit } = state.rules.compiled;
+    const policy = [{ id: 'REFUND-CAP', limit_cents: cap, outcome: 'block' }, { id: 'REFUND-APPROVAL', limit_cents: reviewLimit, outcome: 'review' }];
+    return structuredClone({ ...state, rules: { ...state.rules, domain: 'company', policy },
+      domains: [{ domain: 'company', version: state.rules.version, policy }],
+      ruleIndex: indexRules('company', state.rules.text),
+      // Like GET /api/approvals: escalations first and urgent, then held replies oldest first.
+      approvals: [...state.cases.filter(item => item.status === 'escalated' && !item.decided), ...state.cases.filter(item => item.status === 'held').toReversed()]
+        .map(item => ({ case_id: item.id, draft_id: item.id, urgent: item.status === 'escalated', case_status: item.status })) });
+  }
   function saveRules(text, expectedVersion) {
     if (expectedVersion !== state.rules.version) throw new Error('The rules changed since you opened the editor. Reload the active rules and reapply your edit.');
     compileRules(text);
@@ -140,7 +168,7 @@ export function createDemoStore() {
   function review(id, decision, binding) {
     const item = find(id);
     if (!['approve', 'reject'].includes(decision)) throw new Error('Choose approve or reject.');
-    if (item.status !== 'held') throw new Error('This reply is no longer awaiting approval.');
+    if (item.status !== 'held' && (item.status !== 'escalated' || item.decided)) throw new Error('This reply is no longer awaiting approval.');
     const draft = item.draft;
     if (!binding || ['version', 'rules_version', 'reply_to', 'channel', 'action_type'].some((key) => binding[key] !== draft[key])) {
       throw new Error('This draft changed. Review the latest draft before deciding.');
@@ -148,6 +176,7 @@ export function createDemoStore() {
     if (draft.rules_version !== state.rules.version) throw new Error('Rules changed. Recheck the draft before approving or rejecting.');
     if (item.intent === 'refund' && evaluateRefund(item.amount_cents, state.rules.compiled) === 'block') throw new Error('The current refund cap blocks this reply. Recheck the draft.');
     item.status = decision === 'approve' ? 'approved' : 'escalated';
+    item.decided = true;
     audit(item, decision === 'approve' ? 'Reply approved locally' : 'Reply rejected', decision === 'approve' ? `${item.customer} / draft v${draft.version}. No message sent. No payment made.` : `${item.customer} / escalated to owner. No message sent.`, decision === 'approve' ? 'pass' : 'review');
     return snapshot();
   }

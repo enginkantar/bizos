@@ -1,46 +1,51 @@
-# Owner desk, revision 2
+# Owner desk, revision 3
 
 Plain HTML, CSS and ES modules. No build step, browser dependencies, remote fonts,
 CDNs or scripts. The same `web/` folder works at `/` and under a GitHub Pages
 project path. Serve it over HTTP, rather than opening a `file:` URL.
 
-From the repository root, `npm run web` serves fixtures at http://127.0.0.1:5173/
-using Python's standard-library static server. No npm install is needed for the UI.
-Refresh resets demo data. The persistent ribbon identifies fixture mode.
+`npm start` serves this desk at `/` beside the API (live mode). From the repository
+root, `npm run web` serves it alone at http://127.0.0.1:5173/ with synthetic dental
+fixtures, using Python's standard-library static server. Refresh resets demo data;
+the top bar says "Demo data · server offline" in that mode.
 
 The first `/api/rules` request selects live mode if the API responds. A failed
-initial request loads synthetic dental fixtures. Later live failures preserve
-last-loaded live data and show an error; they never silently switch to fixtures.
+initial request loads the fixtures. Later live failures keep the last live data and
+show a notice; they never silently switch to fixtures.
 
-For live mode, the Node server must serve `web/` at `/` on its own origin. The
-current base branch has JSON routes only. Static serving is Petr's separate
-server change and is a dependency for `npm start` to show this UI. This PR does
-not modify the server. GitHub Pages is a demo fallback, with no localhost bridge.
+## Layout (1440x756 and up)
 
-Try the demo:
+- **Top bar:** BizOS, the pack badge, counts (received, drafted, approved, blocked),
+  the rules pill for the file behind the case on screen (`RULES company · v4`, from
+  the API, flashes when any file's version moves), the live heartbeat, and a link to
+  the stage view `/demo.html`.
+- **Cases:** filter tabs All / Gate Hold / Blocked / Sent. Gate Hold is the server's
+  approval queue (`GET /api/approvals`): escalations first, with a rose URGENT pill.
+  Each row shows only the customer, the status pill and the department.
+- **Case:** the message thread, and a pinned gate box. Held drafts get the amber
+  gate box with Approve & Send (approves the shown draft and rules versions) and
+  Escalate (the reject decision). Blocked drafts get the banner
+  `BLOCKED: <policy> · Requested · Maximum permitted · Rules version` and
+  **Re-run same request**, which posts the newest draft again so the gate judges it
+  under the current rules. The agent's `evidence` shows as Supporting information,
+  `missing_info` as Required information.
+- **Rules & gate:** the file and limits behind the case, each citation with its quote
+  or rule line, and the gate result exactly as the API stored it, plus the draft
+  history. **Activity** is the audit feed.
+- **Rules editor:** opens in the middle column from the rules pill, a citation, or
+  the inspector. Saving shows the version bump and the diff.
 
-1. The $500 refund shows `Gate: BLOCK`, `Status: blocked`, and
-   `Blocked by REFUND-CAP: $200`.
-2. Approve the hours reply in one tap. Its gate PASS still required approval.
-   Demo approvals remain local and never send a message or make a payment.
-3. Edit company.rules.md, changing `max_amount_cents: 20000` to `25000`.
-   Save shows v4 and the diff. Add a $225 request to see a held draft under v4.
-   Earlier held drafts retain v3 and require rechecking.
-4. Click KNOW-HOURS to highlight the cited rule. Live mode finds the right file
-   among API-provided domains (company, front-desk, billing in the dental pack).
+## Try the demo
 
-Live policy readouts come only from API-compiled policy. Rules saves use
-`expected_version`; 422 refusals explain that nothing was saved, and 409 errors
-ask the owner to reload/recheck. Approval submits the displayed draft and rules
-versions. Only a server-confirmed `sent` case is shown as sent.
+1. **New patient** posts the inquiry; approve it and the reply appears in the thread.
+2. **$500 refund** is blocked by REFUND-CAP ($200, company.rules.md).
+3. Edit `max_amount_cents: 20000` to `60000` in company.rules.md and save, then
+   **Re-run same request**: BLOCK becomes REVIEW, held for the owner.
+4. Close on the Activity tab and the header counts.
 
-Demo controls submit labeled synthetic inbound messages and canned suggestions
-to the real gate in live mode. They do not call a model. The local fixture editor
-is intentionally limited to the displayed amounts and hours; it is a simulation,
-not a YAML parser or a security boundary. Live edits support the full server format.
-The fixtures illustrate the team's $200 REFUND-CAP storyline. The dental starter
-pack also keeps REFUND-CAP in company.rules.md, but REFUND-APPROVAL in
-billing.rules.md; live mode always shows the real server verdict.
+The Simulate buttons post labeled synthetic messages and scripted drafts to the real
+gate; they never call a model. The fixture editor in demo mode only accepts changes
+to the displayed amounts and hours; it is a simulation, not a security boundary.
 
 `npm test` runs server and dependency-free web behavioral tests. `npm run build`
 type-checks the server; `npm run lint` checks JavaScript syntax.

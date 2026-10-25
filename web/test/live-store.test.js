@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connectStore, request, normalizeCase } from '../src/live-store.js';
+import { indexRules } from '../src/demo-store.js';
 
 test('first API failure loads labeled dental fallback; pass replies remain held', async t => {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('offline'); });
@@ -59,4 +60,18 @@ test('a later connection failure preserves the live store and its last data', as
   const before = store.snapshot(); failed = true;
   await assert.rejects(store.refresh(), /connection lost/);
   assert.equal(store.mode, 'live'); assert.deepEqual(store.snapshot(), before);
+});
+
+test('case normalization parses the agent evidence and missing_info for the gate box', () => {
+  const item = normalizeCase({ messages: [], drafts: [{ rule_citations: '["REFUND-CAP"]', rules_versions: '{}', evidence: '[{"rule_id":"REFUND-CAP","quote":"never refund more than $200"}]', missing_info: '["the date of the charge"]', gate_reason: '$500.00 is over REFUND-CAP ($200.00)' }] });
+  assert.deepEqual(item.draft.evidence, [{ rule_id: 'REFUND-CAP', quote: 'never refund more than $200' }]);
+  assert.deepEqual(item.draft.missing_info, ['the date of the charge']);
+  assert.equal(item.draft.cap, 20000);
+});
+
+test('rule index names the file that defines each ID and prefers its prose line', () => {
+  const index = indexRules('company', '---\npolicy:\n  REFUND-CAP: { max_amount_cents: 20000 }\n---\n- REFUND-CAP: never refund more than $200.\n- [KNOW-HOURS] Open weekdays.\nMentions REFUND-APPROVAL in passing.');
+  assert.deepEqual(index['REFUND-CAP'], { domain: 'company', text: '- REFUND-CAP: never refund more than $200.' });
+  assert.equal(index['KNOW-HOURS'].domain, 'company');
+  assert.equal(index['REFUND-APPROVAL'], undefined);
 });
