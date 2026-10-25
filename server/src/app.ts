@@ -103,10 +103,23 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
   r.on("POST", "/api/cases/:id/drafts", (_req, { id }, body) => guarded(() => {
     const b = (body ?? {}) as Record<string, any>;
     const domain = str(b.domain, "domain")!;
-    const text = str(b.text, "text")!;
+    // `reply` is the agent output contract's name for the text (issue #29).
+    const text = str(b.text ?? b.reply, "text")!;
     const citations = b.rule_citations ?? [];
     if (!Array.isArray(citations) || !citations.every((c) => typeof c === "string")) {
       throw new HttpError(400, "invalid_rule_citations");
+    }
+    const evidenceIn = b.evidence ?? [];
+    if (!Array.isArray(evidenceIn) || !evidenceIn.every((e) =>
+      typeof e === "object" && e !== null
+      && typeof e.rule_id === "string" && e.rule_id.trim() !== ""
+      && typeof e.quote === "string" && e.quote.trim() !== "")) {
+      throw new HttpError(400, "invalid_evidence");
+    }
+    const evidence = (evidenceIn as { rule_id: string; quote: string }[]).map((e) => ({ ruleId: e.rule_id, quote: e.quote }));
+    const missingInfo = b.missing_info ?? [];
+    if (!Array.isArray(missingInfo) || !missingInfo.every((m) => typeof m === "string" && m.trim() !== "")) {
+      throw new HttpError(400, "invalid_missing_info");
     }
     let action: { type: string; amountCents: number } | undefined;
     if (b.action !== undefined && b.action !== null) {
@@ -118,7 +131,7 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
     if (route !== undefined && !["auto_reply", "draft_for_approval", "human_now"].includes(route)) {
       throw new HttpError(400, "invalid_route");
     }
-    const res = createDraft(db, store, { caseId: id, domain, text, ruleCitations: citations, action, route });
+    const res = createDraft(db, store, { caseId: id, domain, text, ruleCitations: citations, action, route, evidence, missingInfo });
     return {
       status: 201,
       body: {

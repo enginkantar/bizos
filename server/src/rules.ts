@@ -204,3 +204,28 @@ export function withVersion(raw: string, version: number): string {
   const newHeader = header.replace(re, (_l, comment = "") => `version: ${version}${comment}`);
   return text.replace(header, newHeader);
 }
+
+// Whitespace-folded, lower-case, for comparing a quote with a rule: a rule
+// wrapped over two lines in the file reads as one sentence in a quote.
+export const normText = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+
+// The text of the rule an ID starts - its rule line ("- ID: ..." or
+// "- [ID] ...") plus the indented lines that continue it - across the files
+// in force, normalized with normText. Empty if no rule line starts with the ID,
+// including an ID that exists only as a policy: key.
+export function ruleText(files: RulesFile[], id: string): string {
+  const out: string[] = [];
+  for (const f of files) {
+    const lines = f.body.split("\n");
+    lines.forEach((line, i) => {
+      const r = RULE_LINE.exec(line);
+      if (!r || (r[1] ?? r[2]) !== id) return;
+      const parts = [line.slice(r[0].length)];
+      for (let j = i + 1; j < lines.length && /^\s+\S/.test(lines[j]) && !RULE_LINE.test(lines[j]) && !/^\s*[-*+]\s/.test(lines[j]); j++) {
+        parts.push(lines[j]);
+      }
+      out.push(parts.join(" "));
+    });
+  }
+  return normText(out.join(" "));
+}

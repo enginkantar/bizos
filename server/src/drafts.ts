@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { audit, type CaseStatus } from "./db.ts";
 import { evaluate, formatCents, type Verdict } from "./gate.ts";
 import type { RuleStore } from "./rulestore.ts";
-import type { RulesFile } from "./rules.ts";
+import { ruleText, normText, type RulesFile } from "./rules.ts";
 
 // Drafts and approvals: everything between "an agent wrote a reply" and "the
 // reply is queued to send" (design v1.2 §3, §6). The order is fixed:
@@ -26,6 +26,16 @@ export interface DraftInput {
   // answer waits for the owner", so that is the default - and auto_reply is
   // recorded but never sends while auto-send is off (see createDraft).
   route?: Route;
+  // The agent's evidence (issue #29): which rule backs which claim, with the
+  // rule's own words. Every rule_id also counts as a citation.
+  evidence?: Evidence[];
+  // What the agent still needs from the customer; the reply asks for it.
+  missingInfo?: string[];
+}
+
+export interface Evidence {
+  ruleId: string;
+  quote: string;
 }
 
 export interface DraftResult {
@@ -130,11 +140,14 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
       ? `the reply mentions ${over.map(formatCents).join(", ")}, above the validated ${formatCents(allowed)}`
       : `the reply mentions ${over.map(formatCents).join(", ")} but no amount was validated`);
   }
-  if (input.ruleCitations.length === 0) {
+  // Evidence rule IDs are citations too, so the "real rule, defined once"
+  // checks below cover them without a second code path.
+  const evidence = input.evidence ?? [];
+  const cited = [...new Set([...input.ruleCitations, ...evidence.map((e) => e.ruleId)])];
+  if (cited.length === 0) {
     verdict = worse(verdict, "review");
     reasons.push("cites no rule: a rules gap for the owner to fill");
   }
-  const cited = [...new Set(input.ruleCitations)];
   const unknown = cited.filter((id) => definitions(files, id) === 0);
   if (unknown.length) {
     verdict = worse(verdict, "review");
@@ -144,6 +157,17 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
   if (duplicated.length) {
     verdict = worse(verdict, "review");
     reasons.push(`cites rules defined more than once: ${duplicated.join(", ")}`);
+  }
+  // 🔴 A REAL RULE ID WITH INVENTED CONTENT MUST NOT PASS (issue #29). The
+  //    citation check proves the ID exists; this proves the rule says what the
+  //    agent claims it says. The quote must appear, word for word (whitespace
+  //    and case aside), in the rule the ID starts. IDs already reported as
+  //    unknown are not reported twice.
+  const misquoted = evidence.filter((e) =>
+    definitions(files, e.ruleId) > 0 && !ruleText(files, e.ruleId).includes(normText(e.quote)));
+  if (misquoted.length) {
+    verdict = worse(verdict, "review");
+    reasons.push(`quotes a rule that does not say this: ${misquoted.map((e) => `${e.ruleId} ("${e.quote}")`).join(", ")}`);
   }
 
   // 🔴 AUTO-SEND IS OFF (Engin, decision 2, Oct 25). Every reply waits for the
@@ -163,14 +187,21 @@ export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInpu
       .get(kase.id) as { v: number };
     const draftId = randomUUID();
     const t = now();
+    const storedEvidence = evidence.map((e) => ({ rule_id: e.ruleId, quote: e.quote }));
+    const missingInfo = input.missingInfo ?? [];
     db.prepare(`INSERT INTO drafts (id, case_id, version, text, domain, rules_version, rules_versions,
-        rule_citations, amount_cents, action_type, gate_verdict, gate_policy_id, gate_reason, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        rule_citations, amount_cents, action_type, gate_verdict, gate_policy_id, gate_reason,
+        evidence, missing_info, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(draftId, kase.id, v, input.text, input.domain, versions[input.domain] ?? 0, JSON.stringify(versions),
-        JSON.stringify(input.ruleCitations), input.action?.amountCents ?? null, input.action?.type ?? null,
-        verdict, policyId, reasons.join("; ") || null, t);
+        JSON.stringify(cited), input.action?.amountCents ?? null, input.action?.type ?? null,
+        verdict, policyId, reasons.join("; ") || null,
+        JSON.stringify(storedEvidence), JSON.stringify(missingInfo), t);
     db.prepare("UPDATE cases SET status = ?, domain = ?, updated_at = ? WHERE id = ?").run(status, input.domain, t, kase.id);
-    audit(db, "drafted", kase.id, { draft_id: draftId, version: v, verdict, policy_id: policyId, reasons, route });
+    audit(db, "drafted", kase.id, {
+      draft_id: draftId, version: v, verdict, policy_id: policyId, reasons, route,
+      evidence: storedEvidence, missing_info: missingInfo,
+    });
     db.exec("COMMIT");
     return { draftId, version: v, verdict, policyId, reasons, status, outboxId: null };
   } catch (e) {
@@ -195,6 +226,7 @@ interface DraftRow {
   rules_version: number; rules_versions: string; rule_citations: string;
   amount_cents: number | null; action_type: string | null;
   gate_verdict: Verdict; gate_policy_id: string | null; gate_reason: string | null; created_at: string;
+  evidence: string; missing_info: string;
 }
 
 // The approval queue: the newest draft of every held case, oldest case first,
@@ -211,6 +243,9 @@ export function listApprovals(db: DatabaseSync) {
     domain: r.domain, customer: r.customer, recipient: r.recipient, channel: r.channel, text: r.text,
     amount_cents: r.amount_cents, rule_citations: JSON.parse(r.rule_citations) as string[],
     gate_verdict: r.gate_verdict, gate_policy_id: r.gate_policy_id, gate_reason: r.gate_reason, created_at: r.created_at,
+    // For the approval card: one chip per evidence item, and what the reply asks.
+    evidence: JSON.parse(r.evidence) as { rule_id: string; quote: string }[],
+    missing_info: JSON.parse(r.missing_info) as string[],
   }));
 }
 

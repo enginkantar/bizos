@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS drafts (
   -- Every rules file the gate consulted, {"support":3,"company":1}. An approval
   -- is void if ANY of them changed, not just the domain's own file.
   rules_versions  TEXT NOT NULL DEFAULT '{}',
+  -- The agent's evidence ([{"rule_id","quote"}]) and what it still needs to
+  -- know (["preferred days"]), for the owner's approval card (issue #29).
+  evidence        TEXT NOT NULL DEFAULT '[]',
+  missing_info    TEXT NOT NULL DEFAULT '[]',
   created_at      TEXT NOT NULL,
   UNIQUE (case_id, version)
 );
@@ -135,6 +139,8 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
   ["drafts", "action_type", "TEXT"],
   ["drafts", "gate_reason", "TEXT"],
   ["drafts", "rules_versions", "TEXT NOT NULL DEFAULT '{}'"],
+  ["drafts", "evidence", "TEXT NOT NULL DEFAULT '[]'"],
+  ["drafts", "missing_info", "TEXT NOT NULL DEFAULT '[]'"],
 ];
 
 function migrate(db: DatabaseSync) {
