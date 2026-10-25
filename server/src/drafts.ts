@@ -246,17 +246,31 @@ interface DraftRow {
   evidence: string; missing_info: string;
 }
 
-// The approval queue: the newest draft of every held case, oldest case first,
-// so the owner works through it in the order customers wrote.
+// Cases a person must decide on: held drafts, and escalated ones (DAY_PLAN
+// acceptance: "unknown request goes to the approval queue, never guessed").
+// The owner IS the person an escalation goes to - an emergency's drafted
+// "call 911 now" reply must be approvable from the queue, not stuck in a
+// case view. Agreed with Engin, Oct 25.
+const AWAITING = ["held", "escalated"] as const;
+
+// The approval queue: the newest undecided draft of every case awaiting the
+// owner. Escalated (urgent) cases first, then oldest first, so the owner works
+// through it in the order customers wrote. A draft the owner already decided
+// leaves the queue - a rejected escalation stays `escalated` for them to handle
+// in person, and must not come back.
 export function listApprovals(db: DatabaseSync) {
   const rows = db.prepare(`
-    SELECT d.*, c.customer, c.reply_to AS recipient, c.channel
+    SELECT d.*, c.customer, c.reply_to AS recipient, c.channel, c.status AS case_status
     FROM drafts d JOIN cases c ON c.id = d.case_id
-    WHERE c.status = 'held'
+    WHERE c.status IN ('held', 'escalated')
       AND d.version = (SELECT MAX(version) FROM drafts WHERE case_id = d.case_id)
-    ORDER BY c.created_at`).all() as unknown as (DraftRow & { customer: string | null; recipient: string; channel: string })[];
+      AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.draft_id = d.id)
+    ORDER BY (c.status = 'escalated') DESC, c.created_at`).all() as unknown as
+    (DraftRow & { customer: string | null; recipient: string; channel: string; case_status: CaseStatus })[];
   return rows.map((r) => ({
     draft_id: r.id, case_id: r.case_id, draft_version: r.version, rules_version: r.rules_version,
+    case_status: r.case_status,
+    urgent: r.case_status === "escalated",
     domain: r.domain, customer: r.customer, recipient: r.recipient, channel: r.channel, text: r.text,
     amount_cents: r.amount_cents, rule_citations: JSON.parse(r.rule_citations) as string[],
     gate_verdict: r.gate_verdict, gate_policy_id: r.gate_policy_id, gate_reason: r.gate_reason, created_at: r.created_at,
@@ -294,7 +308,9 @@ export function decide(db: DatabaseSync, store: RuleStore, draftId: string, d: D
 
   const latest = (db.prepare("SELECT MAX(version) AS v FROM drafts WHERE case_id = ?").get(kase.id) as { v: number }).v;
   if (d.draftVersion !== draft.version || latest !== draft.version) throw new DraftError(409, "stale_draft");
-  if (kase.status !== "held") throw new DraftError(409, "not_awaiting_approval", { case_status: kase.status });
+  if (!(AWAITING as readonly string[]).includes(kase.status)) {
+    throw new DraftError(409, "not_awaiting_approval", { case_status: kase.status });
+  }
 
   if (d.decision === "approve") {
     // Rules edited since the draft was checked void the approval: the owner
