@@ -8,6 +8,7 @@ import { RulesError, type RulesFile } from "./rules.ts";
 import { lineDiff, changesOnly } from "./diff.ts";
 import { createDraft, listApprovals, decide, DraftError, type Route } from "./drafts.ts";
 import { dispatchOutbox } from "./outbox.ts";
+import { serveStatic } from "./static.ts";
 
 // The routes frozen at 11:00 (DAY_PLAN.md), plus POST /api/cases/:id/drafts,
 // the one door every proposed reply comes through. docs/API.md documents each.
@@ -199,5 +200,10 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
     body: db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT 100").all(),
   }));
 
-  return createServer((req, res) => { void r.handle(req, res); });
+  // Everything outside /api/ is the owner desk and widget in web/ (static.ts);
+  // a path that is not a file there still gets the router's JSON 404.
+  return createServer((req, res) => {
+    if (!(req.url ?? "/").startsWith("/api/") && serveStatic(config.webDir, req, res)) return;
+    void r.handle(req, res);
+  });
 }

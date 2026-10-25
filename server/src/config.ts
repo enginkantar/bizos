@@ -8,6 +8,7 @@ export interface Config {
   dbPath: string;
   rulesDir: string;
   starterTemplate: string;
+  webDir: string;
   anthropicApiKey: string | undefined;
   routerModel: string;
   agentModel: string;
@@ -30,6 +31,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Copied into rulesDir on first start if rulesDir does not exist yet, so a
     // fresh clone runs the demo business with one command. Empty = never copy.
     starterTemplate: env.STARTER_TEMPLATE ?? "dental-office",
+    // The owner desk and widget, served at / beside the API (static.ts).
+    webDir: env.WEB_DIR || "web",
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
     routerModel: env.ROUTER_MODEL || "claude-haiku-5-5",
     agentModel: env.AGENT_MODEL || "claude-sonnet-5-5",
