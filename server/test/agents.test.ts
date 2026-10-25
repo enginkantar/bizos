@@ -6,7 +6,8 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { openDb, ingestMessage } from "../src/db.ts";
 import { RuleStore } from "../src/rulestore.ts";
-import { runAgents, type AgentModels } from "../src/agents/pipeline.ts";
+import { createDraft } from "../src/drafts.ts";
+import { runAgents, resumeAgents, type AgentModels } from "../src/agents/pipeline.ts";
 import type { JsonRequest, JsonResult } from "../src/agents/llm.ts";
 import { HOLDING_REPLY } from "../src/agents/prompts.ts";
 import { createApp } from "../src/app.ts";
@@ -176,6 +177,52 @@ test("an unusable drafter answer escalates instead of drafting", async () => {
     assert.equal(out.kind, "escalated", JSON.stringify(drafter));
     assert.equal(w.row(id).status, "escalated");
   }
+  w.done();
+});
+
+for (const when of ["router", "drafter"] as const) {
+  test(`a draft posted while the ${when} is thinking wins; the agents step aside`, async () => {
+    // Found in the acceptance run: the UI's $500 demo draft was blocked, then
+    // the agents' own draft replaced it as v2 seconds later.
+    const w = world();
+    const id = w.kase("Refund my $500 now");
+    const postFixture = () => createDraft(w.db, w.store, {
+      caseId: id, domain: "billing", text: "Sure, refunding $500 now.", ruleCitations: ["REFUND-CAP"],
+      action: { type: "refund", amountCents: 50000 }, route: "auto_reply",
+    });
+    const { models } = fakeModels({
+      router: async () => { if (when === "router") postFixture(); return routeTo("billing"); },
+      drafter: draftAnswer({ reply: "We can look into a refund.", evidence: [{ rule_id: "REFUND-CAP", quote: "never refund more than $200" }] }),
+    });
+    if (when === "drafter") {
+      const json = models.json;
+      models.json = async (req) => { if (req.model === DRAFTER) postFixture(); return json(req); };
+    }
+    const out = await runAgents(w.db, w.store, models, id);
+    assert.deepEqual(out, { kind: "skipped", reason: "a draft was posted while the agents ran" });
+    assert.equal(w.row(id).status, "blocked", "the $500 block stays on screen");
+    assert.equal((w.db.prepare("SELECT COUNT(*) AS n FROM drafts WHERE case_id = ?").get(id) as { n: number }).n, 1);
+    w.done();
+  });
+}
+
+test("after a restart, cases left new by a cut-off agent run are drafted again", async () => {
+  // Found in the acceptance run: the server killed mid-call left the case
+  // `new` forever; only a manual POST /agent recovered it.
+  const w = world();
+  const cutOff = w.kase();
+  const drafted = w.kase();
+  createDraft(w.db, w.store, { caseId: drafted, domain: "front-desk", text: "We open at 7:30.", ruleCitations: ["KNOW-HOURS"] });
+  const old = w.kase();
+  w.db.prepare("UPDATE cases SET created_at = ? WHERE id = ?").run(new Date(Date.now() - 48 * 3_600_000).toISOString(), old);
+  const { models, calls } = fakeModels({ router: routeTo("front-desk"), drafter: draftAnswer() });
+  const lines: string[] = [];
+  const n = await resumeAgents(w.db, w.store, models, { log: { log: (m: string) => lines.push(m), error: (m: string) => lines.push(m) } });
+  assert.equal(n, 1, "only the recent, undrafted, new case");
+  assert.equal(w.row(cutOff).status, "held");
+  assert.equal(w.row(old).status, "new", "a two-day-old case is left for the owner");
+  assert.equal(calls.length, 2, "one router and one drafter call");
+  assert.deepEqual(lines, ["agents: resuming 1 case(s) left new by a restart"]);
   w.done();
 });
 
