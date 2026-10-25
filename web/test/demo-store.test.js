@@ -125,11 +125,16 @@ test('reject escalates without sending and removes the case from approvals', () 
   assert.match(after.audit[0].detail, /escalated to owner. No message sent./);
 });
 
-test('gap and blocked cases cannot be approved', () => {
+test('blocked cases cannot be approved; an escalation is approved or kept by the owner, like the server', () => {
   const store = createDemoStore();
-  for (const item of store.snapshot().cases.filter((entry) => ['blocked', 'escalated'].includes(entry.status))) {
-    assert.throws(() => store.review(item.id, 'approve', item.draft));
-  }
+  const blocked = store.snapshot().cases.find((entry) => entry.status === 'blocked');
+  assert.throws(() => store.review(blocked.id, 'approve', blocked.draft));
+  const escalated = store.snapshot().cases.find((entry) => entry.status === 'escalated');
+  assert.equal(store.snapshot().approvals[0].case_id, escalated.id);
+  assert.equal(store.snapshot().approvals[0].urgent, true);
+  store.review(escalated.id, 'reject', escalated.draft);
+  assert.ok(!store.snapshot().approvals.some((entry) => entry.case_id === escalated.id));
+  assert.throws(() => store.review(escalated.id, 'approve', escalated.draft));
 });
 
 test('snapshot cannot mutate store state and reset restores the original run', () => {
