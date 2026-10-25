@@ -176,17 +176,20 @@ export function parseRulesFile(raw: string, expectedDomain?: string): RulesFile 
   }
   if (errors.length) throw new RulesError(errors);
 
-  // The prose HARD RULES are the human-readable mirror of the policy block.
-  // A policy ID the prose never mentions is the drift v1.2 warns about, but
-  // the ID scheme for prose rules is still open, so this warns, not refuses.
-  const warnings = thresholds
-    .filter((t) => !body.includes(t.id))
-    .map((t) => `${t.id} is enforced by the gate but not mentioned in the prose rules`);
-
   const ruleIds = body.split("\n").flatMap((line) => {
     const r = RULE_LINE.exec(line);
     return r ? [r[1] ?? r[2]] : [];
   });
+
+  // The prose HARD RULES are the human-readable mirror of the policy block.
+  // A policy ID the prose never mentions is the drift v1.2 warns about. A
+  // mention must be the whole ID (issue #27): "REFUND-CAP-ALL" in the prose
+  // does not mention REFUND-CAP.
+  const mentioned = (id: string) => ruleIds.includes(id)
+    || new RegExp(`(^|[^A-Za-z0-9-])${id}($|[^A-Za-z0-9-])`).test(body);
+  const warnings = thresholds
+    .filter((t) => !mentioned(t.id))
+    .map((t) => `${t.id} is enforced by the gate but not mentioned in the prose rules`);
 
   return { domain: domain as string, version: version as number, meta: m, thresholds, ruleIds, body, raw, warnings };
 }

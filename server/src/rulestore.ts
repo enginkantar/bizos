@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync, statSync, writeFileSync, renameSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseRulesFile, withVersion, RulesError, type RulesFile } from "./rules.ts";
+
+// The repo's templates/, found from this file rather than the working
+// directory, so starting the server from another folder still seeds the
+// starter pack (issue #27).
+const TEMPLATES_ROOT = fileURLToPath(new URL("../../templates", import.meta.url));
 
 // Holds the active rules for every domain, read from <dir>/<domain>.rules.md.
 //
@@ -92,6 +98,8 @@ export class RuleStore {
     const next = withVersion(raw, currentVersion + 1);
     const file = parseRulesFile(next, domain);
 
+    // A missing RULES_DIR made the first save a 500 (issue #27); create it.
+    mkdirSync(this.dir, { recursive: true });
     const path = this.fileFor(domain);
     const tmp = path + ".tmp";
     writeFileSync(tmp, next, "utf8");
@@ -106,7 +114,7 @@ export class RuleStore {
 // an owner who emptied it on purpose, or edited it, is never overwritten.
 // business/ is gitignored: it is the business's data, like .env, and the
 // owner's edits during the demo must not show up as repo changes.
-export function seedFromTemplate(rulesDir: string, template: string, templatesRoot = "templates"): string[] {
+export function seedFromTemplate(rulesDir: string, template: string, templatesRoot = TEMPLATES_ROOT): string[] {
   if (!template || existsSync(rulesDir)) return [];
   const from = join(templatesRoot, template);
   if (!existsSync(from)) return [];

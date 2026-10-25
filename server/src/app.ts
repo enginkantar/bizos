@@ -14,7 +14,9 @@ import { serveStatic } from "./static.ts";
 // the one door every proposed reply comes through. docs/API.md documents each.
 
 function str(v: unknown, field: string, required = true): string | undefined {
-  if (v === undefined || v === null || v === "") {
+  // Whitespace-only counts as missing (issue #27): "   " as a reply_to or a
+  // message text is not an address or a message.
+  if (v === undefined || v === null || (typeof v === "string" && v.trim() === "")) {
     if (required) throw new HttpError(400, `missing_${field}`);
     return undefined;
   }
@@ -33,7 +35,19 @@ function parseInbound(body: unknown) {
   const replyTo = str(b.reply_to, "reply_to")!;
   const text = str(b.content?.text, "content.text")!;
   const customer = typeof b.customer?.name === "string" ? b.customer.name : undefined;
-  const receivedAt = str(b.received_at, "received_at", false);
+  // received_at decides message order, so it must be a real time, stored in
+  // one format (issue #27): parse it and keep UTC ISO-8601, or refuse it.
+  const rawReceivedAt = str(b.received_at, "received_at", false);
+  let receivedAt: string | undefined;
+  if (rawReceivedAt !== undefined) {
+    const at = new Date(rawReceivedAt);
+    if (Number.isNaN(at.getTime())) throw new HttpError(400, "invalid_received_at");
+    receivedAt = at.toISOString();
+  }
+  // Outbound replies are stored under "reply:<draft>:v<n>" in the same id space
+  // as inbound messages. An inbound message claiming that id would make the
+  // reply's insert a no-op while the job is marked sent (issue #27).
+  if (sourceMessageId.startsWith("reply:")) throw new HttpError(400, "reserved_message_id");
   return { channel, sourceMessageId, replyTo, text, customer, receivedAt };
 }
 
@@ -128,7 +142,8 @@ export function createApp(db: DatabaseSync, config: Config, store = new RuleStor
       if (!Number.isSafeInteger(b.action.amount_cents)) throw new HttpError(400, "invalid_action.amount_cents");
       action = { type, amountCents: b.action.amount_cents };
     }
-    const route = b.route as Route | undefined;
+    // null means "not given", like every other optional field (issue #27).
+    const route = (b.route ?? undefined) as Route | undefined;
     if (route !== undefined && !["auto_reply", "draft_for_approval", "human_now"].includes(route)) {
       throw new HttpError(400, "invalid_route");
     }
