@@ -104,9 +104,20 @@ function definitions(files: RulesFile[], id: string): number {
 // The single entry point for a reply: agents call it, and so does the demo's
 // labeled "unsafe suggestion" fixture. The model proposes; this decides.
 export function createDraft(db: DatabaseSync, store: RuleStore, input: DraftInput): DraftResult {
-  const kase = db.prepare("SELECT id, channel, reply_to FROM cases WHERE id = ?").get(input.caseId) as
-    { id: string; channel: string; reply_to: string } | undefined;
+  const kase = db.prepare("SELECT id, channel, reply_to, status FROM cases WHERE id = ?").get(input.caseId) as
+    { id: string; channel: string; reply_to: string; status: CaseStatus } | undefined;
   if (!kase) throw new DraftError(404, "case_not_found");
+  // The newest draft's outcome becomes the case status, so a draft must not
+  // land on a case it would misrepresent (issue #27):
+  // - escalated: a person owns it now (a lawyer, fraud, or a draft the owner
+  //   rejected). An agent's next draft would pull it back into the queue as
+  //   "held" and hide the escalation.
+  // - approved: a reply is queued to send. A new draft would say "held" while
+  //   the approved reply still goes out.
+  // A sent case still takes a draft: that is a follow-up, held for approval.
+  if (kase.status === "escalated" || kase.status === "approved") {
+    throw new DraftError(409, "case_not_draftable", { case_status: kase.status });
+  }
   if (!input.text.trim()) throw new DraftError(400, "empty_draft");
 
   const reasons: string[] = [];

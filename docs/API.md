@@ -310,7 +310,16 @@ the demo's labeled **"unsafe suggestion"** fixture. The model proposes; this dec
 }
 ```
 
-How `status` is decided:
+**The newest draft's outcome becomes the case status**, so not every case takes a new draft:
+
+| case status | new draft |
+|---|---|
+| `new`, `held`, `blocked` | accepted: normal drafting, and the UI's **Recheck** after a rules edit |
+| `sent`, `quote_sent` | accepted as a follow-up; the case goes back to `held` for approval |
+| `escalated` | **409** `case_not_draftable`: a person owns it (`human_now`, or the owner rejected the draft). Handle it outside the queue in v1 |
+| `approved` | **409** `case_not_draftable`: a reply is queued to send. Wait for `sent`, then draft a follow-up |
+
+How the new draft's `status` is decided:
 
 | when | `status` |
 |---|---|
@@ -338,7 +347,8 @@ ignored; the words are not. Otherwise the reply is held with
 An ID that exists only as a `policy:` key has no rule text, so quote its prose rule line
 instead.
 
-`404 { "error": "case_not_found" }`; `400` for a missing field, `invalid_evidence` (not a
+`404 { "error": "case_not_found" }`; `409 { "error": "case_not_draftable", "case_status": "escalated" }`
+(see the table above); `400` for a missing field, `invalid_evidence` (not a
 list of non-empty `rule_id` and `quote` strings) or `invalid_missing_info` (not a list of
 non-empty strings).
 
