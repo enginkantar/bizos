@@ -39,6 +39,26 @@ export function mergeMessages(cases) {
   return out.sort((a, b) => a.received_at.localeCompare(b.received_at) || a.id.localeCompare(b.id));
 }
 
+// With no server behind the page (the GitHub Pages copy), Send stays on this page: the
+// patient's words echo back with a canned reply that says plainly nothing was sent.
+export function demoExchange(text, n) {
+  return [
+    { id: `demo-${n}-in`, direction: 'in', text },
+    { id: `demo-${n}-out`, direction: 'out', demo: true,
+      text: 'This is an offline demo, so your message did not reach the clinic. With the BizOS server running, the front desk drafts a reply under the clinic\'s rules and a team member checks it before it is sent.' },
+  ];
+}
+
+// The page is live only when the BizOS API answers its health check.
+async function serverUp() {
+  try {
+    const res = await fetch('./api/health', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+    return res.ok && (await res.json())?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 function loadCaseIds() {
   try {
     const ids = JSON.parse(sessionStorage.getItem(STORE_KEY) ?? '[]');
@@ -66,6 +86,7 @@ function start() {
   const sendButton = $('send');
   const errorLine = $('error');
   const connLine = $('conn');
+  const demoLine = $('demo');
 
   const params = new URLSearchParams(location.search);
   nameInput.value = params.get('name') ?? '';
@@ -76,6 +97,8 @@ function start() {
   // Sends not yet visible in a case: { messageId, text, state: 'sending' | 'failed' | 'sent' }.
   let pending = [];
   let lastFingerprint = '';
+  let demo = false;
+  const demoMessages = [];
 
   function remember(caseId) {
     if (caseIds.includes(caseId)) return;
@@ -83,13 +106,13 @@ function start() {
     saveCaseIds(caseIds);
   }
 
-  function bubble(direction, text, note) {
+  function bubble(direction, text, note, isDemo = false) {
     const li = document.createElement('li');
-    li.className = `msg msg-${direction}`;
+    li.className = `msg msg-${direction}${isDemo ? ' msg-demo' : ''}`;
     if (direction === 'out') {
       const who = document.createElement('span');
       who.className = 'msg-who';
-      who.textContent = 'BrightSmile Dental';
+      who.textContent = isDemo ? 'Demo reply · not from the clinic' : 'BrightSmile Dental';
       li.append(who);
     }
     const body = document.createElement('p');
@@ -100,7 +123,7 @@ function start() {
   }
 
   function render() {
-    const messages = mergeMessages(caseIds.map((id) => cases.get(id)));
+    const messages = demo ? demoMessages : mergeMessages(caseIds.map((id) => cases.get(id)));
     const shown = new Set(messages.map((m) => m.source_message_id));
     pending = pending.filter((p) => !shown.has(p.messageId));
     // Rebuilding only on change keeps scroll position and text selection still on every tick.
@@ -112,7 +135,7 @@ function start() {
     if (!messages.length && !pending.length) {
       items.push(bubble('out', 'Hi! Ask us about opening hours, appointments or a bill. A team member checks every reply before it is sent.'));
     }
-    for (const m of messages) items.push(bubble(m.direction, m.text));
+    for (const m of messages) items.push(bubble(m.direction, m.text, null, m.demo));
     for (const p of pending) {
       let note = null;
       if (p.state === 'failed') {
@@ -204,6 +227,13 @@ function start() {
       (problem.includes('email') ? emailInput : textInput).focus();
       return;
     }
+    if (demo) {
+      demoMessages.push(...demoExchange(text, demoMessages.length));
+      textInput.value = '';
+      textInput.focus();
+      render();
+      return;
+    }
     const messageId = crypto.randomUUID();
     const item = {
       messageId,
@@ -225,7 +255,13 @@ function start() {
   });
 
   render();
-  tick();
+  serverUp().then((up) => {
+    demo = !up;
+    demoLine.hidden = up;
+    lastFingerprint = '';
+    render();
+    if (up) tick();
+  });
 }
 
 if (typeof document !== 'undefined') start();

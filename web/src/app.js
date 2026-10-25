@@ -165,7 +165,7 @@ function rulesEditor() {
   const options = state.domains.map((d) => `<option value="${esc(d.domain)}" ${d.domain === r.domain ? 'selected' : ''}>${esc(d.domain)}.rules.md · v${esc(d.version)}</option>`).join('');
   return `<main class="pane stage editor" aria-labelledby="editor-title"><header class="case-head"><div><h1 id="editor-title">Rules editor</h1><p>Plain Markdown. Saving bumps the version; the gate uses it on its very next check.</p></div>
       <button class="btn ghost" id="close-rules">Back to case</button></header>${noticeStrip()}
-    <form id="rules-form" class="scroll"><label class="file-select">File <select id="rules-domain" ${store.mode === 'demo' ? 'disabled' : ''}>${options}</select></label>
+    <form id="rules-form" class="scroll"><label class="file-select">File <select id="rules-domain">${options}</select></label>
       <textarea id="rules-text" spellcheck="false" aria-label="Rules file text">${esc(editorText)}</textarea><p id="rules-error" class="form-error" role="alert"></p>
       <div class="editor-actions"><button class="btn approve" type="submit">Save rules</button><button class="btn ghost" type="button" id="reload-rules">Reload active</button>
       ${store.mode === 'demo' ? '<span class="hint">Fixture editor: change the amounts or hours only.</span>' : ''}</div>
@@ -229,10 +229,8 @@ function render({ keepView = false } = {}) {
 }
 function notify(message, error = false) { notice = message; noticeError = error; render({ keepView: true }); }
 async function openRules(domain, citationId) {
-  if (store.mode === 'live') {
-    if (citationId) await store.selectCitation(citationId);
-    else if (domain) await store.selectDomain(domain);
-  }
+  if (citationId) await store.selectCitation(citationId);
+  else if (domain) await store.selectDomain(domain);
   state = store.snapshot(); editorText = state.rules.text; editorVersion = state.rules.version;
   rulesOpen = true;
   if (!noticeError) notice = '';
