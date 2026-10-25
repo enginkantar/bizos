@@ -41,8 +41,7 @@ export function mergeMessages(cases) {
   return out.sort((a, b) => a.received_at.localeCompare(b.received_at) || a.id.localeCompare(b.id));
 }
 
-// With no server behind the page (the GitHub Pages copy), Send stays on this page: the
-// patient's words appear in the browser-local demo desk, never at a real clinic.
+// Without a server, this acknowledgment must not imply a real clinic reply.
 export function demoExchange(text, n) {
   return [
     { id: `demo-${n}-in`, direction: 'in', text },

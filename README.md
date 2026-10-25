@@ -9,6 +9,7 @@
 On GitHub Pages these are browser-local simulations: widget messages appear in the
 demo desk in the same browser. No AI runs, nothing reaches a clinic, and approvals
 send nothing. Use invented details. Run the local server below for the real API path.
+See the [demo guide](web/README.md) for storage, reset behavior, and the rule-edit walkthrough.
 
 If you run a small business, every email, DM, refund question, and new-hire
 question lands on **you**. BizOS gives you an AI staff that handles them —
