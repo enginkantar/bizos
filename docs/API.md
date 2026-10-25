@@ -109,7 +109,13 @@ Responses:
 
 - `201 { "case_id": "…", "duplicate": false }`: a new case
 - `200 { "case_id": "…", "duplicate": true }`: seen before; same case, nothing written
-- `400 { "error": "missing_source" }` (or `missing_reply_to`, `missing_content.text`, …)
+- `400 { "error": "missing_source" }` (or `missing_reply_to`, `missing_content.text`, …).
+  Whitespace-only counts as missing.
+- `400 invalid_received_at` if `received_at` isn't a parseable time. A valid one is stored
+  as UTC ISO-8601 (`2026-10-25T10:00:00-07:00` becomes `2026-10-25T17:00:00.000Z`)
+- `400 reserved_message_id` for a `message_id` starting with `reply:`, which is reserved for
+  the server's own outbound replies
+- Any route: `400 invalid_path` for malformed percent-encoding in the URL
 
 The widget should generate a fresh `message_id` per message (`crypto.randomUUID()`), and
 reuse it only when retrying the same send.

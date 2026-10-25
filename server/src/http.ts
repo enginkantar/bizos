@@ -42,7 +42,12 @@ export class Router {
       if (r.parts.length !== parts.length) continue;
       const params: Record<string, string> = {};
       const ok = r.parts.every((p, i) => {
-        if (p.startsWith(":")) { params[p.slice(1)] = decodeURIComponent(parts[i]); return true; }
+        if (p.startsWith(":")) {
+          // Malformed percent-encoding ("/api/cases/%E0") threw URIError and
+          // came back as a 500 (issue #27). It is the client's mistake: a 400.
+          try { params[p.slice(1)] = decodeURIComponent(parts[i]); } catch { throw new HttpError(400, "invalid_path"); }
+          return true;
+        }
         return p === parts[i];
       });
       if (!ok) continue;
