@@ -297,8 +297,15 @@ Either way, the draft's `gate_reason` starts with `escalated: …`, giving the r
 If a model call **fails** (network, rate limit), the case stays `new`, `agent_failed` is
 written to the audit log, and nothing is lost.
 
+- **A restart picks the work up again.** On startup, every case from the last 24 hours that's
+  still `new` with no draft is run through the agents. These are messages whose agent run a
+  restart cut off.
+- **A draft posted while the agents run wins.** The UI's demo buttons post a scripted draft
+  (the $500 refund) right after the inbox message. If any draft exists by the time a model
+  answers, the agents step aside (`agent_superseded`) rather than replacing it.
+
 **Audit events:** `agent_routed` (department, confidence, urgency, reason), `agent_escalated`
-(reason), `agent_failed` (error), then the usual `drafted`.
+(reason), `agent_superseded`, `agent_failed` (error), then the usual `drafted`.
 
 **Prompts** live in one file, `server/src/agents/prompts.ts` (Siddharth's): both system
 prompts, both output schemas, and the effort each model uses.

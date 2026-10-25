@@ -78,7 +78,24 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
     .map(({ state }) => state.active!);
   const user = P.customerMessage(msg.text, kase.customer);
 
+  // 🔴 SOMEONE ELSE MAY DRAFT THE CASE WHILE THE MODELS THINK. The UI's demo
+  //    buttons post a scripted draft (the $500 refund) right after the inbox
+  //    message, at the same moment the agents start on it. Without this check
+  //    the agents' draft landed seconds later as v2 and replaced the blocked
+  //    $500 with their own outcome - found in the acceptance run. Any draft
+  //    that exists by the time a model answers wins; the agents step aside.
+  //    Checked right before every write, with no await in between, so it
+  //    cannot be raced.
+  const superseded = (): AgentOutcome | null => {
+    const { n } = db.prepare("SELECT COUNT(*) AS n FROM drafts WHERE case_id = ?").get(caseId) as { n: number };
+    if (n === 0) return null;
+    audit(db, "agent_superseded", caseId, { reason: "a draft was posted while the agents ran" });
+    return { kind: "skipped", reason: "a draft was posted while the agents ran" };
+  };
+
   const escalate = (reason: string, domain = SHARED): AgentOutcome => {
+    const s = superseded();
+    if (s) return s;
     audit(db, "agent_escalated", caseId, { reason });
     const draft = createDraft(db, store, {
       caseId, domain, text: P.HOLDING_REPLY, ruleCitations: [], route: "human_now", notes: [`escalated: ${reason}`],
@@ -115,6 +132,8 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
   const routerEscalation = v.route === "human_now"
     ? `router: ${isStr(v.reason) ? v.reason : "needs a person"}`
     : null;
+  const early = superseded();
+  if (early) return early;
   db.prepare("UPDATE cases SET status = 'routed', domain = ?, updated_at = ? WHERE id = ? AND status = 'new'")
     .run(department, new Date().toISOString(), caseId);
 
@@ -133,6 +152,8 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
   if (typeof d === "string") return escalate(`drafter: unusable answer (${d})`, department);
 
   // 3. The model proposes; createDraft decides (citations, quotes, the gate).
+  const late = superseded();
+  if (late) return late;
   if (routerEscalation) audit(db, "agent_escalated", caseId, { reason: routerEscalation });
   const draft = createDraft(db, store, {
     caseId, domain: department, text: d.reply, ruleCitations: [], evidence: d.evidence,
@@ -143,4 +164,29 @@ export async function runAgents(db: DatabaseSync, store: RuleStore, models: Agen
   return routerEscalation
     ? { kind: "escalated", reason: routerEscalation, draft }
     : { kind: "drafted", department, draft };
+}
+
+// After a restart: messages whose agent run was cut off - the server stopped
+// mid-call - sit at `new` with no draft, and nothing would pick them up again
+// (DAY_PLAN acceptance: "app restart: pending work resumes"). Re-run them one
+// at a time. Only recent ones: an old `new` case is the owner's to look at,
+// not a reason to spend model calls on every start.
+export async function resumeAgents(
+  db: DatabaseSync, store: RuleStore, models: AgentModels,
+  { maxAgeHours = 24, log = console }: { maxAgeHours?: number; log?: Pick<Console, "log" | "error"> } = {},
+): Promise<number> {
+  const since = new Date(Date.now() - maxAgeHours * 3_600_000).toISOString();
+  const ids = (db.prepare(`SELECT id FROM cases c WHERE status = 'new' AND created_at >= ?
+      AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.case_id = c.id) ORDER BY created_at LIMIT 50`)
+    .all(since) as { id: string }[]).map((r) => r.id);
+  if (ids.length) log.log(`agents: resuming ${ids.length} case(s) left new by a restart`);
+  for (const id of ids) {
+    try {
+      await runAgents(db, store, models, id);
+    } catch (e) {
+      audit(db, "agent_failed", id, { error: (e as Error).message });
+      log.error(`agents: case ${id} failed on resume: ${(e as Error).message}`);
+    }
+  }
+  return ids.length;
 }

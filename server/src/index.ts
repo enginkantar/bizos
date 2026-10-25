@@ -4,6 +4,7 @@ import { createApp } from "./app.ts";
 import { RuleStore, seedFromTemplate } from "./rulestore.ts";
 import { startOutboxLoop } from "./outbox.ts";
 import { anthropicJsonModel } from "./agents/llm.ts";
+import { resumeAgents } from "./agents/pipeline.ts";
 
 const config = loadConfig();
 const db = openDb(config.dbPath);
@@ -19,6 +20,9 @@ const agents = config.anthropicApiKey && config.agentsEnabled
   ? { json: anthropicJsonModel(config.anthropicApiKey), routerModel: config.routerModel, agentModel: config.agentModel }
   : undefined;
 const server = createApp(db, config, store, agents);
+// Messages whose agent run a restart cut off get picked up again, in the
+// background, once the server is answering.
+if (agents) setImmediate(() => { void resumeAgents(db, store, agents); });
 
 // Say at startup what the gate will enforce - and what it cannot load - so a
 // broken or missing rules file is visible before the first message, not after.
