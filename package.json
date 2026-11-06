@@ -13,8 +13,8 @@
     "dev": "node --env-file-if-exists=.env --watch server/src/index.ts",
     "web": "python3 -m http.server 5173 --bind 127.0.0.1 --directory web",
     "build": "tsc --noEmit",
-    "test": "node --test \"server/test/*.test.ts\" \"web/test/*.test.js\"",
-    "lint": "node --check web/src/app.js && node --check web/src/demo-store.js && node --check web/src/live-store.js && node --check web/src/widget.js"
+    "test": "node --test \"server/test/*.test.ts\" \"web/test/*.test.js\" \"tools/loc/*.test.mjs\"",
+    "lint": "node tools/loc/check.mjs && node --check web/src/app.js && node --check web/src/demo-store.js && node --check web/src/live-store.js && node --check web/src/widget.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

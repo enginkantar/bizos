@@ -20,6 +20,7 @@ ones that make that easier.
 
 ```bash
 python3 tools/claimcheck/claimcheck.py    # what this project claims is true
+npm run lint && npm run build && npm test # code checks
 npm install && npm start                  # still starts from a clean checkout
 ```
 
@@ -41,3 +42,31 @@ compile from it, so they can never disagree.
 
 **Comments say why, not what.** The code says what it does. The comment is for
 the person about to "simplify" something that is load-bearing.
+
+## Code file length
+
+Aim for **500 physical lines or fewer** per code file. `npm run lint` warns
+above **800** lines and fails above **1000**. Exactly 800 is quiet; exactly
+1000 warns and passes. Warnings do not fail CI. The existing `install` CI
+job runs lint, build and tests.
+
+The check counts blank lines and comments, including a final unterminated
+line. LF and CRLF count the same; a final newline adds no phantom line.
+It discovers tracked and non-ignored untracked files across the repository,
+including tests, tooling, build/CI/config code and executable fixture
+generators. Application HTML and CSS are code. A code file in `templates/`,
+`data/` or `fixtures/` is still code.
+
+Prose, rules Markdown, raw text/tabular data, images, binary files, JSON
+payloads under `data/`, `fixtures/` and `testdata/`, lockfiles, dependency/vendor
+trees and `dist/`/`coverage/` output are exempt. Package and TypeScript JSON
+configuration remains code even in payload directories. There are currently
+no generated source files outside those output trees. Any future generated-source exemption must name its
+reviewed paths explicitly; generators themselves remain code. Symlinks are
+not followed. Unknown text formats are checked by default. When adding a new content or generated format,
+review its actual contents and update `tools/loc/check.mjs` and its tests
+with a narrow exemption, rather than exempting a mixed code/content tree.
+
+Run the policy regression tests with `node --test tools/loc/check.test.mjs`
+(or `npm test`). Split growing code along meaningful responsibilities;
+the 500-line target is guidance, not another failing threshold.

@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install, build and test from a clean checkout
+      - name: Install, lint, build and test from a clean checkout
         shell: bash
         run: |
           set -euo pipefail
@@ -43,5 +43,6 @@ jobs:
             exit 0
           fi
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run lint --if-present
           npm run build --if-present
           npm test --if-present
